@@ -1,26 +1,234 @@
 @import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * FinReady design tokens.
+ * Values are transcribed verbatim from the frozen design reference
+ * (FinReady Flow standalone). Do not re-derive or "improve" them.
+ */
+@theme {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+
+  /* surfaces — staff side */
+  --color-canvas: oklch(0.985 0.004 85);
+  --color-surface: #ffffff;
+  --color-surface-muted: oklch(0.975 0.004 85);
+  --color-line: oklch(0.9 0.006 85);
+  --color-line-soft: oklch(0.93 0.006 85);
+  --color-line-faint: oklch(0.95 0.006 85);
+  --color-line-strong: oklch(0.88 0.006 85);
+
+  /* surfaces — customer side (warm shift) */
+  --color-cust-canvas: oklch(0.977 0.014 75);
+  --color-cust-line: oklch(0.9 0.014 75);
+  --color-cust-line-soft: oklch(0.89 0.014 75);
+  --color-cust-muted: oklch(0.5 0.015 75);
+  --color-cust-muted-soft: oklch(0.52 0.015 75);
+  --color-cust-body: oklch(0.45 0.015 75);
+  --color-cust-chip: oklch(0.93 0.02 75);
+
+  /* text */
+  --color-ink: oklch(0.22 0.008 260);
+  --color-ink-soft: oklch(0.26 0.008 260);
+  --color-ink-body: oklch(0.35 0.01 260);
+  --color-ink-muted: oklch(0.45 0.01 260);
+  --color-muted: oklch(0.55 0.01 260);
+  --color-muted-soft: oklch(0.58 0.01 260);
+  --color-muted-faint: oklch(0.62 0.01 260);
+  --color-disabled: oklch(0.75 0.008 260);
+
+  /* accent */
+  --color-accent: oklch(0.48 0.11 255);
+  --color-accent-hover: oklch(0.42 0.115 255);
+  --color-accent-soft: oklch(0.95 0.02 255);
+  --color-accent-tint: oklch(0.96 0.014 255);
+  --color-accent-tab: oklch(0.93 0.012 255);
+  --color-accent-disabled: oklch(0.88 0.02 255);
+  --color-accent-code: oklch(0.42 0.08 255);
+
+  /* coverage / understanding status — EXPLAINED · UNDERSTOOD */
+  --color-ok-fg: oklch(0.42 0.09 155);
+  --color-ok-bg: oklch(0.95 0.035 155);
+  --color-ok-dot: oklch(0.57 0.1 155);
+  --color-ok-mark: oklch(0.92 0.07 155);
+  --color-ok-kicker: oklch(0.48 0.05 155);
+  --color-ok-banner-bg: oklch(0.965 0.03 155);
+  --color-ok-banner-line: oklch(0.87 0.05 155);
+  --color-ok-icon: oklch(0.55 0.1 155);
+
+  /* INSUFFICIENT · UNCERTAIN */
+  --color-warn-fg: oklch(0.43 0.09 78);
+  --color-warn-bg: oklch(0.95 0.05 85);
+  --color-warn-dot: oklch(0.68 0.13 85);
+  --color-warn-dot-trail: oklch(0.9 0.03 85);
+  --color-warn-kicker: oklch(0.48 0.08 78);
+  --color-warn-line: oklch(0.9 0.025 85);
+  --color-warn-bg-soft: oklch(0.975 0.008 85);
+
+  /* NOT_FOUND */
+  --color-none-fg: oklch(0.46 0.12 50);
+  --color-none-bg: oklch(0.95 0.05 55);
+  --color-none-dot: oklch(0.6 0.13 50);
+  --color-none-panel: oklch(0.975 0.012 55);
+  --color-none-panel-line: oklch(0.83 0.05 55);
+  --color-none-body: oklch(0.35 0.02 55);
+  --color-none-kicker: oklch(0.5 0.03 55);
+  --color-none-meta: oklch(0.55 0.02 55);
+  --color-none-rule: oklch(0.9 0.03 55);
+
+  /* gate block banner */
+  --color-block-bg: oklch(0.965 0.028 55);
+  --color-block-line: oklch(0.87 0.055 55);
+  --color-block-icon: oklch(0.62 0.14 45);
+  --color-block-body: oklch(0.42 0.035 55);
+
+  /* staff override accent */
+  --color-override-line: oklch(0.88 0.02 55);
+  --color-override-icon: oklch(0.62 0.1 60);
+  --color-override-bar: oklch(0.68 0.13 60);
+  --color-override-body: oklch(0.44 0.04 55);
+
+  /* CONTRADICTED · MISUNDERSTOOD */
+  --color-bad-fg: oklch(0.44 0.16 25);
+  --color-bad-bg: oklch(0.94 0.06 25);
+  --color-bad-dot: oklch(0.52 0.17 25);
+  --color-bad-u-fg: oklch(0.44 0.14 25);
+  --color-bad-u-bg: oklch(0.94 0.055 25);
+  --color-bad-body: oklch(0.42 0.05 25);
+  --color-bad-line: oklch(0.88 0.02 25);
+  --color-bad-panel: oklch(0.97 0.025 25);
+  --color-bad-kicker: oklch(0.47 0.11 25);
+  --color-bad-meta: oklch(0.5 0.055 25);
+  --color-bad-reexp: oklch(0.4 0.03 25);
+
+  /* misc */
+  --color-scrim: oklch(0.3 0.01 260 / 0.32);
+  --color-rule-quote: oklch(0.86 0.02 75);
+
+  /* type scale — the design uses half-pixel sizes deliberately */
+  --text-2xs: 11.5px;
+  --text-xs: 12px;
+  --text-xs-plus: 12.5px;
+  --text-sm: 13px;
+  --text-sm-plus: 13.5px;
+  --text-base: 14px;
+  --text-base-plus: 14.5px;
+  --text-md: 15px;
+  --text-md-plus: 15.5px;
+  --text-lg: 16px;
+  --text-lg-plus: 16.5px;
+  --text-xl: 17px;
+  --text-xl-plus: 17.5px;
+  --text-2xl: 18px;
+  --text-3xl: 19px;
+  --text-4xl: 20px;
+  --text-5xl: 22px;
+  --text-6xl: 24px;
+  --text-7xl: 32px;
+  --text-8xl: 34px;
+  --text-9xl: 36px;
+  --text-10xl: 68px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: inherit;
+    transition:
+      transform 0.12s cubic-bezier(0.16, 1, 0.3, 1),
+      background-color 0.16s ease-out,
+      box-shadow 0.16s ease-out;
+  }
+  button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  textarea,
+  input {
+    font-family: inherit;
+    transition: box-shadow 0.16s ease-out;
+  }
+  textarea:focus,
+  input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-accent);
+  }
+
+  a {
+    color: var(--color-accent);
+  }
+  a:hover {
+    color: var(--color-accent-hover);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes finready-screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Indeterminate sweep — signals work in progress without claiming a ratio. */
+@keyframes finready-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@keyframes finready-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@utility screen-in {
+  animation: finready-screen-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@utility fade-in {
+  animation: finready-fade-in 0.2s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

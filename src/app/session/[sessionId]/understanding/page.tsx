@@ -1,0 +1,10 @@
+import { UnderstandingScreen } from "@/screens/understanding/understanding-screen";
+
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ sessionId: string }>;
+}) {
+  const { sessionId } = await params;
+  return <UnderstandingScreen sessionId={sessionId} />;
+}
