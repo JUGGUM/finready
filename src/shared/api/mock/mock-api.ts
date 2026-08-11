@@ -130,7 +130,10 @@ function persist(): void {
   }
 }
 
-const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Tests run the same code path without waiting out the simulated latency. */
+const SKIP_LATENCY = process.env.NEXT_PUBLIC_MOCK_LATENCY === "0";
+const wait = (ms: number) =>
+  SKIP_LATENCY ? Promise.resolve() : new Promise<void>((r) => setTimeout(r, ms));
 const now = () => new Date().toISOString();
 
 let seq = 0;
@@ -256,7 +259,14 @@ function resumePointOf(session: MockSession): ResumePoint {
     case "GATE_BLOCKED":
       return "S03";
     case "UNDERSTANDING_IN_PROGRESS":
-      return "S04";
+      // A risk that ran out of attempts is the staff member's to settle, so
+      // the session resumes on their screen rather than back at the
+      // customer's question.
+      return targetRiskIds(session).some(
+        (id) => understandingOf(session, id).workflowStatus === "MANUAL_REVIEW_REQUIRED",
+      )
+        ? "S07"
+        : "S04";
     default:
       return "S08";
   }
@@ -877,6 +887,17 @@ export class MockFinReadyApi implements FinReadyApi {
       session.sessionStatus === "SESSION_CLOSED_WITH_UNRESOLVED"
     ) {
       return toSessionResponse(session);
+    }
+
+    // TRD §5.1: the only transition into a closed state starts at
+    // AWAITING_STAFF_REVIEW. Closing mid-flow would strand the customer's
+    // outstanding risks with no disposition at all.
+    if (session.sessionStatus !== "AWAITING_STAFF_REVIEW") {
+      fail(
+        "INVALID_STATE_TRANSITION",
+        "고객 이해 확인이 끝나야 상담을 종료할 수 있습니다.",
+        409,
+      );
     }
 
     const gate = evaluateGate(session.coverage, session.coverageRevisionId !== null);

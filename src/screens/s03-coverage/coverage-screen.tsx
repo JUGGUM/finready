@@ -78,7 +78,10 @@ export function CoverageScreen({ sessionId }: { sessionId: string }) {
 
   const results = coverage.risks ?? [];
   const blocking = coverage.blockingRiskIds ?? [];
-  const gateBlocked = coverage.gateStatus === "GATE_BLOCKED";
+
+  // The server decides whether the customer step may start. `gateStatus` is
+  // only used to phrase *why* — never to re-judge the answer.
+  const canProceed = coverage.canProceedToUnderstanding ?? false;
   const withOverride = coverage.gateStatus === "READY_WITH_STAFF_OVERRIDE";
 
   const selectedId = params.get("risk") ?? blocking[0] ?? results[0]?.riskId ?? "";
@@ -144,7 +147,7 @@ export function CoverageScreen({ sessionId }: { sessionId: string }) {
           </div>
 
           <GateBanner
-            blocked={gateBlocked}
+            blocked={!canProceed}
             withOverride={withOverride}
             blockingLabels={blocking.map(
               (id) =>
@@ -244,7 +247,7 @@ export function CoverageScreen({ sessionId }: { sessionId: string }) {
               ) : null}
 
               <div className="mt-[40px] flex items-center gap-[18px] border-t border-[var(--color-line)] pt-[24px]">
-                {gateBlocked ? (
+                {!canProceed ? (
                   <>
                     <button
                       type="button"

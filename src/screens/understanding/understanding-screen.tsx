@@ -59,13 +59,19 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
   const [view, setView] = useState<View>({ kind: "question", mode: "INITIAL" });
 
   const allQuestions = questions.data?.questions ?? [];
-  const completedRiskIds = new Set(
+  // Settled, or waiting on a staff decision — either way the customer has
+  // nothing left to answer for that risk.
+  const closedToCustomer = new Set(
     (session.data?.understanding ?? [])
-      .filter((s) => s.workflowStatus === "COMPLETE")
+      .filter(
+        (s) =>
+          s.workflowStatus === "COMPLETE" ||
+          s.workflowStatus === "MANUAL_REVIEW_REQUIRED",
+      )
       .map((s) => s.riskId as string),
   );
   const openQuestions = allQuestions.filter(
-    (q) => !completedRiskIds.has(q.riskId as string),
+    (q) => !closedToCustomer.has(q.riskId as string),
   );
   const customerDone =
     Boolean(questions.data) &&

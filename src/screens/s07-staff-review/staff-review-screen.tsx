@@ -7,6 +7,7 @@ import {
   INPUT_LIMITS,
   UNDERSTANDING_AI_STATUS_LABEL,
 } from "@/shared/constants/labels";
+import { resumeHref } from "@/shared/lib/resume";
 import type { StaffDisposition } from "@/shared/types/domain";
 import { ErrorNote } from "@/shared/ui/error-note";
 import { ScreenSkeleton } from "@/shared/ui/screen-skeleton";
@@ -83,18 +84,17 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
         actor: "staff-demo",
       },
       {
-        // `/staff-resolution` returns the risk's state, not a `nextAction`
-        // (unlike `/understanding`). Rather than re-deriving the branch
-        // rule here, re-read the session and go by what the server now
-        // says is outstanding.
+        // `/staff-resolution` returns the risk's state, with no `nextAction`
+        // (unlike `/understanding` and `/recheck`) — that gap is filed as a
+        // contract issue. Until the new contract lands, this follows the
+        // server's `resumePoint` rather than inventing a local branch rule,
+        // so the flow stays server-driven either way.
         onSuccess: async () => {
           const fresh = await session.refetch();
-          const outstanding = (fresh.data?.understanding ?? []).some(
-            (s) => s.workflowStatus !== "COMPLETE",
-          );
+          const resumePoint = fresh.data?.resumePoint;
           router.push(
-            outstanding
-              ? `/session/${sessionId}/understanding${query}`
+            resumePoint
+              ? resumeHref(sessionId, resumePoint, query)
               : `/session/${sessionId}/report${query}`,
           );
         },
