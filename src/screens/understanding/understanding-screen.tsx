@@ -1,13 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnswerForm } from "@/screens/understanding/answer-form";
 import { ReExplanationView } from "@/screens/understanding/reexplanation-view";
 import { ResultView } from "@/screens/understanding/result-view";
 import {
   useQuestions,
   useReexplain,
+  useSession,
   useSubmitAnswer,
   useSubmitRecheck,
 } from "@/shared/api/queries";
@@ -43,13 +44,39 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
   const query = scenario === "safety" ? "?scenario=safety" : "";
 
   const questions = useQuestions(sessionId, true);
+  const session = useSession(sessionId);
   const submitAnswer = useSubmitAnswer(sessionId);
   const submitRecheck = useSubmitRecheck(sessionId);
   const reexplain = useReexplain(sessionId);
 
-  const [riskIndex, setRiskIndex] = useState(0);
+  /**
+   * Which risk is on screen. Null means "whatever the server says is still
+   * open" — that way re-entering (after a staff resolution, or a reload)
+   * resumes at the right risk instead of restarting at the first one.
+   */
+  const [activeRiskId, setActiveRiskId] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [view, setView] = useState<View>({ kind: "question", mode: "INITIAL" });
+
+  const allQuestions = questions.data?.questions ?? [];
+  const completedRiskIds = new Set(
+    (session.data?.understanding ?? [])
+      .filter((s) => s.workflowStatus === "COMPLETE")
+      .map((s) => s.riskId as string),
+  );
+  const openQuestions = allQuestions.filter(
+    (q) => !completedRiskIds.has(q.riskId as string),
+  );
+  const customerDone =
+    Boolean(questions.data) &&
+    Boolean(session.data) &&
+    openQuestions.length === 0;
+
+  // Nothing left for the customer to answer — hand the device back. Done in
+  // an effect because navigating during render updates the router mid-render.
+  useEffect(() => {
+    if (customerDone) router.replace(`/session/${sessionId}/return${query}`);
+  }, [customerDone, router, sessionId, query]);
 
   if (questions.isError) {
     return (
@@ -63,16 +90,17 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
       </CustomerShell>
     );
   }
-  if (!questions.data) return <ScreenSkeleton />;
+  if (!questions.data || !session.data) return <ScreenSkeleton />;
+  if (customerDone) return <ScreenSkeleton label="직원 화면으로 이동합니다" />;
 
-  const list = questions.data.questions ?? [];
-  const total = questions.data.totalRiskCount ?? list.length;
-  const current = list[Math.min(riskIndex, list.length - 1)];
+  const total = questions.data.totalRiskCount ?? allQuestions.length;
+  const current =
+    openQuestions.find((q) => q.riskId === activeRiskId) ?? openQuestions[0];
 
   if (!current) return <ScreenSkeleton />;
 
   const riskId = current.riskId as string;
-  const kicker = `핵심 위험 ${current.orderIndex ?? riskIndex + 1} / ${total}`;
+  const kicker = `핵심 위험 ${current.orderIndex ?? 1} / ${total}`;
   const samples = RISK_ANSWERS[riskId];
   const pending =
     submitAnswer.isPending || submitRecheck.isPending || reexplain.isPending;
@@ -80,11 +108,13 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
   /** Advance to whatever the server said comes next. */
   const follow = (nextAction: NextAction, result?: UnderstandingResponse) => {
     switch (nextAction) {
-      case "NEXT_RISK":
-        setRiskIndex((i) => Math.min(i + 1, list.length - 1));
+      case "NEXT_RISK": {
+        const next = openQuestions.find((q) => q.riskId !== current.riskId);
+        setActiveRiskId((next?.riskId as string) ?? null);
         setAnswer("");
         setView({ kind: "question", mode: "INITIAL" });
         return;
+      }
       case "RECHECK":
         setAnswer("");
         setView({ kind: "question", mode: "RECHECK" });
@@ -127,7 +157,7 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
 
   return (
     <CustomerShell
-      currentIndex={current.orderIndex ?? riskIndex + 1}
+      currentIndex={current.orderIndex ?? 1}
       totalCount={total}
     >
       {error ? (

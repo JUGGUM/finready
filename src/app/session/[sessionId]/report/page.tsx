@@ -1,4 +1,4 @@
-import { ReturnScreen } from "@/screens/handoff/return-screen";
+import { ReportScreen } from "@/screens/s08-report/report-screen";
 
 export default async function Page({
   params,
@@ -6,5 +6,5 @@ export default async function Page({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  return <ReturnScreen sessionId={sessionId} />;
+  return <ReportScreen sessionId={sessionId} />;
 }

@@ -1,4 +1,4 @@
-import { ReturnScreen } from "@/screens/handoff/return-screen";
+import { StaffReviewScreen } from "@/screens/s07-staff-review/staff-review-screen";
 
 export default async function Page({
   params,
@@ -6,5 +6,5 @@ export default async function Page({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  return <ReturnScreen sessionId={sessionId} />;
+  return <StaffReviewScreen sessionId={sessionId} />;
 }

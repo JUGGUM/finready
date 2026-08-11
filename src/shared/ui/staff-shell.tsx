@@ -33,11 +33,16 @@ const STEPS: ReadonlyArray<{ id: StepId; label: string }> = [
   { id: "s08", label: "S08 리포트" },
 ];
 
-/** Routes that exist today. Steps without one render as not-yet-reachable. */
+/**
+ * Staff-reachable routes. S04–S06 are customer screens with no staff entry
+ * point, so they show as steps but are never navigable from here.
+ */
 const STEP_ROUTE: Partial<Record<StepId, string>> = {
   s01: "prepare",
   s02: "transcript",
   s03: "coverage",
+  s07: "review",
+  s08: "report",
 };
 
 const SCENARIO_TAG: Record<ScenarioId, { label: string; className: string }> = {
