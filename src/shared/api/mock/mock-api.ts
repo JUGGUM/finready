@@ -196,8 +196,20 @@ function understandingOf(session: MockSession, riskId: string): RiskUnderstandin
   return session.understanding[riskId];
 }
 
-/** Understanding targets, minus risks an override explicitly excluded. */
-function targetRiskIds(session: MockSession): string[] {
+/**
+ * Every understandingCheck risk, always all three.
+ *
+ * Kept separate from the question list on purpose: a risk the staff member
+ * excluded still has to appear in the report as SKIPPED_BY_OVERRIDE and
+ * still counts as unresolved. Reusing one array for "ask the customer" and
+ * "account for in the report" is what made an excluded risk vanish.
+ */
+function reportableRiskIds(): string[] {
+  return [...UNDERSTANDING_CHECK_RISK_IDS];
+}
+
+/** Risks the customer will actually be asked about. */
+function questionEligibleRiskIds(session: MockSession): string[] {
   const skipped = new Set(
     session.overrides
       .filter((o) => o.staffExplanationConfirmed === false)
@@ -206,8 +218,9 @@ function targetRiskIds(session: MockSession): string[] {
   return UNDERSTANDING_CHECK_RISK_IDS.filter((id) => !skipped.has(id));
 }
 
+/** Risks still awaiting a disposition. Skipped ones are already COMPLETE. */
 function pendingTargets(session: MockSession): string[] {
-  return targetRiskIds(session).filter(
+  return reportableRiskIds().filter(
     (id) => understandingOf(session, id).workflowStatus !== "COMPLETE",
   );
 }
@@ -237,10 +250,14 @@ function syncStatus(session: MockSession): void {
     return;
   }
 
-  const started = targetRiskIds(session).some(
+  // Progress is measured against the risks the customer can be asked
+  // about. An override-excluded risk is already COMPLETE and must not, by
+  // itself, make the session look like the customer step has begun.
+  const eligible = questionEligibleRiskIds(session);
+  const started = eligible.some(
     (id) => understandingOf(session, id).workflowStatus !== "NOT_STARTED",
   );
-  if (!started) {
+  if (!started && eligible.length > 0) {
     session.sessionStatus = "COVERAGE_ANALYZED";
     return;
   }
@@ -262,7 +279,7 @@ function resumePointOf(session: MockSession): ResumePoint {
       // A risk that ran out of attempts is the staff member's to settle, so
       // the session resumes on their screen rather than back at the
       // customer's question.
-      return targetRiskIds(session).some(
+      return reportableRiskIds().some(
         (id) => understandingOf(session, id).workflowStatus === "MANUAL_REVIEW_REQUIRED",
       )
         ? "S07"
@@ -485,7 +502,7 @@ function recordAnswer(
   }
   save(session);
 
-  const targets = targetRiskIds(session);
+  const targets = questionEligibleRiskIds(session);
   return {
     riskId,
     question,
@@ -551,7 +568,7 @@ export class MockFinReadyApi implements FinReadyApi {
       resumePoint: resumePointOf(session),
       currentRevision: revision ? toRevisionResponse(revision) : undefined,
       coverage: session.coverageRevisionId !== null ? toCoverageResponse(session) : null,
-      understanding: targetRiskIds(session).map((id) =>
+      understanding: reportableRiskIds().map((id) =>
         toUnderstandingState(session, id),
       ),
     };
@@ -694,7 +711,7 @@ export class MockFinReadyApi implements FinReadyApi {
       fail("GATE_NOT_OPEN", "설명 충족도 확인이 끝나지 않았습니다.", 409);
     }
 
-    const targets = targetRiskIds(session);
+    const targets = questionEligibleRiskIds(session);
 
     // Idempotent: regenerating would change the wording mid-demo.
     if (session.questions.length === 0) {
@@ -828,7 +845,7 @@ export class MockFinReadyApi implements FinReadyApi {
     const session = getOrFail(sessionId);
     const gate = evaluateGate(session.coverage, session.coverageRevisionId !== null);
 
-    const unresolvedRiskIds = targetRiskIds(session).filter((id) => {
+    const unresolvedRiskIds = reportableRiskIds().filter((id) => {
       const d = understandingOf(session, id).finalDisposition;
       return d === "UNRESOLVED" || d === "SKIPPED_BY_OVERRIDE";
     });
@@ -853,7 +870,7 @@ export class MockFinReadyApi implements FinReadyApi {
         gateStatus: gate.gateStatus,
         results: session.coverage,
       },
-      understanding: targetRiskIds(session).map((id) =>
+      understanding: reportableRiskIds().map((id) =>
         toUnderstandingState(session, id),
       ),
       overrides: session.overrides,
@@ -907,7 +924,7 @@ export class MockFinReadyApi implements FinReadyApi {
       fail("WARNING_ACKNOWLEDGEMENT_REQUIRED", "참고 확인 항목을 확인해주세요.");
     }
 
-    const unresolved = targetRiskIds(session).filter((id) => {
+    const unresolved = reportableRiskIds().filter((id) => {
       const d = understandingOf(session, id).finalDisposition;
       return d === "UNRESOLVED" || d === "SKIPPED_BY_OVERRIDE";
     });

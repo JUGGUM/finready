@@ -7,7 +7,7 @@ import {
   INPUT_LIMITS,
   UNDERSTANDING_AI_STATUS_LABEL,
 } from "@/shared/constants/labels";
-import { resumeHref } from "@/shared/lib/resume";
+import { decideResume } from "@/shared/lib/resume";
 import type { StaffDisposition } from "@/shared/types/domain";
 import { ErrorNote } from "@/shared/ui/error-note";
 import { ScreenSkeleton } from "@/shared/ui/screen-skeleton";
@@ -29,6 +29,8 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
   const session = useSession(sessionId);
   const resolve = useResolveByStaff(sessionId);
   const [reason, setReason] = useState("");
+  /** Set when the resolution saved but the server gave us no resume point. */
+  const [routeUnknown, setRouteUnknown] = useState(false);
 
   const query = scenario === "safety" ? "?scenario=safety" : "";
 
@@ -85,18 +87,21 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
       },
       {
         // `/staff-resolution` returns the risk's state, with no `nextAction`
-        // (unlike `/understanding` and `/recheck`) — that gap is filed as a
-        // contract issue. Until the new contract lands, this follows the
-        // server's `resumePoint` rather than inventing a local branch rule,
-        // so the flow stays server-driven either way.
+        // (unlike `/understanding` and `/recheck`) — filed as a contract
+        // issue. Until that lands, this follows the server's `resumePoint`.
+        //
+        // If the server tells us nothing, we stop and say so rather than
+        // guessing a destination: picking one here would mean re-deriving
+        // the branch rule the server owns, and guessing wrong could skip a
+        // risk that still needs the customer.
         onSuccess: async () => {
           const fresh = await session.refetch();
-          const resumePoint = fresh.data?.resumePoint;
-          router.push(
-            resumePoint
-              ? resumeHref(sessionId, resumePoint, query)
-              : `/session/${sessionId}/report${query}`,
-          );
+          const decision = decideResume(sessionId, fresh.data?.resumePoint, query);
+          if (decision.kind === "unknown") {
+            setRouteUnknown(true);
+            return;
+          }
+          router.push(decision.href);
         },
       },
     );
@@ -194,6 +199,38 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
 
             {resolve.isError ? (
               <ErrorNote className="mt-[18px]" error={resolve.error} />
+            ) : null}
+
+            {routeUnknown ? (
+              <div
+                role="alert"
+                className="mt-[18px] rounded-[12px] border border-[var(--color-block-line)] bg-[var(--color-block-bg)] px-[24px] py-[18px]"
+              >
+                <p className="text-[15.5px] leading-[1.55] font-semibold">
+                  처리는 저장됐지만 다음 단계를 확인하지 못했습니다.
+                </p>
+                <p className="mt-[6px] text-[14px] text-[var(--color-block-body)]">
+                  상담 상태를 다시 불러온 뒤 이동해주세요.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRouteUnknown(false);
+                    void session.refetch().then((fresh) => {
+                      const decision = decideResume(
+                        sessionId,
+                        fresh.data?.resumePoint,
+                        query,
+                      );
+                      if (decision.kind === "navigate") router.push(decision.href);
+                      else setRouteUnknown(true);
+                    });
+                  }}
+                  className="mt-[14px] rounded-[9px] border border-[var(--color-override-line)] bg-white px-[16px] py-[9px] text-[14px] font-semibold hover:bg-[oklch(0.97_0.004_85)]"
+                >
+                  상담 상태 다시 불러오기
+                </button>
+              </div>
             ) : null}
 
             <div className="mt-[24px] flex items-center gap-[14px]">

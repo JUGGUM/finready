@@ -30,6 +30,14 @@ import { useScenario } from "@/shared/ui/staff-shell";
  * The view within it is chosen by the server's `nextAction` — this screen
  * never inspects `aiStatus` and `attempt` to decide where to go next, which
  * is how a second, divergent copy of the branch rules would get built.
+ *
+ * CONTRACT BLOCKER — mid-step reload.
+ * `SessionSnapshotResponse` carries attempts and `workflowStatus`, so a
+ * reload can tell which risk is open and whether it has escalated. It does
+ * not carry the last result or the re-explanation, so S05 and S06 cannot be
+ * restored exactly; a reload lands on the question for that risk instead.
+ * Reconstructing either locally would mean inventing content the server
+ * never sent, so we don't. Revisit once the contract exposes them.
  */
 
 type View =

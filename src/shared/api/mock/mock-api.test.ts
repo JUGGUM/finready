@@ -46,6 +46,19 @@ async function readySession() {
   return sessionId;
 }
 
+/** Gate opened by override, with R03 excluded from the customer's questions. */
+async function skippedR03Session() {
+  const { sessionId } = await analysedSession();
+  await api.overrideGate(sessionId, {
+    riskIds: ["R03"],
+    category: "OPERATIONAL_EXCEPTION",
+    reason: "시간 관계로 조기상환 조건을 설명하지 못함",
+    staffExplanationConfirmed: false,
+    actor: ACTOR,
+  });
+  return sessionId;
+}
+
 function statusOf(coverage: Awaited<ReturnType<typeof api.analyzeCoverage>>, riskId: string) {
   return coverage.risks?.find((r) => r.riskId === riskId)?.coverageStatus;
 }
@@ -227,6 +240,39 @@ describe("nextAction branching", () => {
     expect(session.sessionStatus).toBe("AWAITING_STAFF_REVIEW");
   });
 
+  it("will not restart a manual-review risk as a fresh question", async () => {
+    const sessionId = await readySession();
+    await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.initial.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    await api.submitRecheck(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.recheck.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+
+    // A reload must not put the customer back on attempt 1 of R01.
+    await expectApiError(
+      api.submitAnswer(sessionId, {
+        riskId: "R01",
+        answer: correctAnswer("R01"),
+        answerSource: ANSWER_SOURCE,
+      }),
+      "ATTEMPT_LIMIT_EXCEEDED",
+    );
+
+    // The question set is idempotent, so re-entering does not reword it.
+    const again = await api.getOrCreateQuestions(sessionId);
+    expect(again.questions?.map((q) => q.riskId)).toEqual(["R01", "R02", "R03"]);
+    const state = (await api.getSession(sessionId)).understanding?.find(
+      (u) => u.riskId === "R01",
+    );
+    expect(state?.workflowStatus).toBe("MANUAL_REVIEW_REQUIRED");
+    expect(state?.attempts).toHaveLength(2);
+  });
+
   it("resumes on the staff screen while a risk awaits manual review", async () => {
     const sessionId = await readySession();
     await api.submitAnswer(sessionId, {
@@ -304,23 +350,65 @@ describe("gate override", () => {
     expect(statusOf(coverage, "R03")).toBe("NOT_FOUND");
   });
 
-  it("drops a risk from the customer flow when it was never explained", async () => {
-    const { sessionId } = await analysedSession();
-    await api.overrideGate(sessionId, {
-      riskIds: ["R03"],
-      category: "OPERATIONAL_EXCEPTION",
-      reason: "시간 관계로 조기상환 조건을 설명하지 못함",
-      staffExplanationConfirmed: false,
-      actor: ACTOR,
-    });
+  it("drops a risk from the questions but keeps it in the report", async () => {
+    const sessionId = await skippedR03Session();
 
     const questions = await api.getOrCreateQuestions(sessionId);
     expect(questions.questions?.map((q) => q.riskId)).toEqual(["R01", "R02"]);
+    expect(questions.totalRiskCount).toBe(2);
+
+    // Excluded from the conversation, still accounted for on the record.
+    const report = await api.getReport(sessionId);
+    const r03 = report.understanding?.find((u) => u.riskId === "R03");
+    expect(r03).toBeDefined();
+    expect(r03?.workflowStatus).toBe("COMPLETE");
+    expect(r03?.finalDisposition).toBe("SKIPPED_BY_OVERRIDE");
+    expect(r03?.attempts).toEqual([]);
+    expect(report.unresolvedRiskIds).toContain("R03");
+  });
+
+  it("leaves a skipped risk unresolved through to the close state", async () => {
+    const sessionId = await skippedR03Session();
+    await api.getOrCreateQuestions(sessionId);
+    for (const riskId of ["R01", "R02"]) {
+      await api.submitAnswer(sessionId, {
+        riskId,
+        answer: correctAnswer(riskId),
+        answerSource: ANSWER_SOURCE,
+      });
+    }
 
     const report = await api.getReport(sessionId);
+    expect(report.closeEligibility?.canClose).toBe(true);
+    expect(report.closeEligibility?.requiresUnresolvedReason).toBe(true);
+    expect(report.closeEligibility?.expectedCloseStatus).toBe(
+      "SESSION_CLOSED_WITH_UNRESOLVED",
+    );
+
+    await expectApiError(
+      api.closeSession(sessionId, { actor: ACTOR }),
+      "UNRESOLVED_REASON_REQUIRED",
+    );
+
+    const closed = await api.closeSession(sessionId, {
+      actor: ACTOR,
+      unresolvedReason: "조기상환 조건은 다음 방문 시 설명하기로 하고 종료",
+    });
+    expect(closed.sessionStatus).toBe("SESSION_CLOSED_WITH_UNRESOLVED");
+  });
+
+  it("keeps the skipped risk in the session snapshot too", async () => {
+    const sessionId = await skippedR03Session();
+    const session = await api.getSession(sessionId);
+
+    expect(session.understanding?.map((u) => u.riskId)).toEqual([
+      "R01",
+      "R02",
+      "R03",
+    ]);
     expect(
-      report.understanding?.find((u) => u.riskId === "R03"),
-    ).toBeUndefined();
+      session.understanding?.find((u) => u.riskId === "R03")?.finalDisposition,
+    ).toBe("SKIPPED_BY_OVERRIDE");
   });
 
   it("demands an explicit answer about understanding-check risks", async () => {
