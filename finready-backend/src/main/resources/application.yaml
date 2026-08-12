@@ -1,3 +1,113 @@
 spring:
   application:
-    name: backend
+    name: finready
+
+  # --------------------------------------------------------
+  # Supabase — Supavisor Session Mode (포트 5432)
+  # --------------------------------------------------------
+  # Direct Connection은 IPv6 전용이라 배포 환경에 따라 막힌다.
+  # Session Mode는 IPv4 호환 + prepared statement 지원이라 JPA와 그대로 맞물린다.
+  #
+  # 연결 문자열은 Supabase 대시보드 > Connect > Session pooler에서 복사한다.
+  # 사용자명이 postgres.{project-ref} 형식이므로, 전용 role은
+  # finready_backend.{project-ref} 형태가 되는지 반드시 확인할 것 (TRD §3.2 각주).
+  datasource:
+    url: ${DB_URL}          # jdbc:postgresql://<host>:5432/postgres?currentSchema=finready&sslmode=require
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5              # DB role의 connection limit 5와 짝을 맞춘다
+      minimum-idle: 1
+      connection-timeout: 10000
+      max-lifetime: 1500000             # 25분. Supavisor idle timeout보다 짧게
+      leak-detection-threshold: 20000
+      pool-name: finready-pool
+
+  flyway:
+    enabled: true
+    schemas: finready
+    default-schema: finready
+    baseline-on-migrate: false
+    validate-on-migrate: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate                # 스키마 변경은 Flyway로만
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: finready
+        # 앱(Singapore) ↔ DB(Seoul) 왕복이 70~90ms다. N+1이 그대로 비용이 된다 (TRD §14.1)
+        default_batch_fetch_size: 100
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+        format_sql: false
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  error:
+    include-stacktrace: never           # 스택트레이스를 응답에 넣지 않는다 (TRD §12)
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always              # DB / 시드 / PDF 해시 상태를 함께 노출
+  health:
+    db:
+      enabled: true
+
+# --------------------------------------------------------
+# FinReady 고유 설정
+# --------------------------------------------------------
+finready:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  seed:
+    path: classpath:seed/product_a_risk_schema.json
+    fail-fast: true                     # 시드/PDF 해시 검증 실패 시 기동 중단 (TRD §4.5)
+  document:
+    base-path: classpath:static/documents
+  evidence:
+    min-length: 15                      # 짧을수록 AMBIGUOUS 확률이 오른다 (TRD §8.3)
+    max-length: 300
+  understanding:
+    max-attempts: 2
+  ai:
+    api-key: ${LLM_API_KEY}             # 응답·로그 어디에도 노출 금지
+    model: ${LLM_MODEL}
+    base-url: ${LLM_BASE_URL}
+    timeout-seconds: 30
+    max-retries: 1                      # 1회만. 무한 재시도 금지 (TRD §7.1)
+    temperature: 0
+
+logging:
+  level:
+    root: INFO
+    io.finready: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{HH:mm:ss} %-5level [%X{requestId}] %logger{36} - %msg%n"
+
+---
+# 로컬 개발 프로파일
+spring:
+  config:
+    activate:
+      on-profile: local
+  jpa:
+    properties:
+      hibernate:
+        format_sql: true
+logging:
+  level:
+    io.finready: DEBUG
+    org.hibernate.SQL: DEBUG

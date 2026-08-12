@@ -18,6 +18,7 @@ finready-backend/out/
 finready-backend/bin/
 finready-backend/HELP.md
 finready-backend/**/application-local.yml
+**/application-local.yml
 
 # Frontend (Next.js / Node)
 finready-frontend/.next/

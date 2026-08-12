@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: backend
+  datasource:
+    url: jdbc:postgresql://<Session-Pooler-Host>:5432/postgres?currentSchema=finready&sslmode=require
+    username: finready_backend.<project-ref>
+    password: dkffkdkffk0816!
