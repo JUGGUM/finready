@@ -1,0 +1,27 @@
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+
+# Environment & Secrets
+.env
+*.pem
+
+# Backend (Spring Boot / Gradle)
+finready-backend/.gradle/
+finready-backend/build/
+finready-backend/out/
+finready-backend/bin/
+finready-backend/HELP.md
+finready-backend/**/application-local.yml
+
+# Frontend (Next.js / Node)
+finready-frontend/.next/
+finready-frontend/node_modules/
+finready-frontend/build/
+finready-frontend/dist/
+finready-frontend/.env.local
