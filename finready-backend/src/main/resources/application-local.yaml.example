@@ -1,0 +1,17 @@
+# application-local.yaml 템플릿
+#
+# 이 파일을 application-local.yaml 로 복사한 뒤 실제 값을 채운다.
+# application-local.yaml 은 .gitignore 대상이다. 절대 커밋하지 않는다.
+#
+# 접속 정보 위치: Supabase 대시보드 > Connect > Session pooler
+#   - 포트는 5432 (Session Mode). 6543(Transaction Pooler)은 prepared statement를
+#     캐시하지 못해 JPA와 맞물리지 않는다. TRD §3.2
+#   - username 은 postgres.{project-ref} 형식이므로 전용 role은
+#     finready_backend.{project-ref} 가 되는지 확인할 것. 안 되면
+#     Direct Connection + IPv4 애드온으로 폴백한다.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://<Session-Pooler-Host>:5432/postgres?currentSchema=finready&sslmode=require
+    username: finready_backend.<project-ref>
+    password: <supabase-role-password>
