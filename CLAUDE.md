@@ -95,16 +95,31 @@ chore: .gitignore 패턴 기반으로 변경
 
 ## 현재 진행 상황
 
-- [x] Supabase `finready` 스키마 + `finready_backend` role + 타임아웃 설정
-- [x] 프로젝트 스캐폴딩, `gradlew build` 성공
-- [ ] `application.yml` / `V1__init.sql` / `V2__audit_append_only.sql` 배치
-- [ ] 로컬에서 Flyway 실행 → 테이블 14개 생성 확인
-- [ ] Render 배포 관통 (Root Directory: `finready-backend`, Build Filter: `finready-backend/**`)
-- [ ] JPA 엔티티 14개 + 시드 로더
-- [ ] `seed/product_a_risk_schema.json`, `static/documents/PROD_A/v1.0.pdf`
-- [ ] F01~F03 (Coverage) → F04~F07 (Understanding) → F08 (Report)
-- [ ] 오프라인 평가 모듈 + Rule baseline
-- [ ] Prompt Freeze → Hold-out 1회 측정
+### 완료
+- Supabase `finready` 스키마 + `finready_backend` role + search_path/타임아웃/커넥션 한도
+- 프로젝트 스캐폴딩, `gradlew build` 성공 (Java 25 / Boot 4.0.7 / Gradle 9.5.1)
+- `application.yml`, `V1__init.sql`, `V2__audit_append_only.sql` 배치
+- `seed/product_a_risk_schema.json` — PRD v1.3.1 정책표 반영본
+- `static/documents/PROD_A/v1.0.pdf` — SHA-256 `5d355381abe028eb492f3c277236ee35a774150f4dbb24c289d2612ca8c5c47e`
+- `src/test/resources/eval/demo_seed.json` — Gate 시나리오 6건 검증 완료
+- 시드 sourceText 9건이 PDF 지정 페이지에 정확히 1회 존재함을 확인 (2026-08-12)
+
+### 다음 순서
+1. `application-local.yml` 작성 → `local` 프로파일로 기동 → Flyway가 테이블 14개 생성 확인
+2. Render 배포 관통 (Root Directory `finready-backend`, Build Filter `finready-backend/**`)
+3. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
+4. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
+5. `GET /api/products/demo` (F01)
+6. 세션 / Revision / StateMachine (TRD §5.1)
+7. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+8. Understanding / 재설명 / Staff Resolution (F04~F07)
+9. Report + Close + Audit (F08)
+10. 오프라인 평가 모듈 + Rule baseline
+
+### 데이터셋 현황 (별도 작업, 코드와 병행)
+- 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
+- 고객 답변 12 / 목표 180
+- 라벨을 먼저 정하고 상담문을 생성하는 방식. 사후 라벨링 비용이 0이다
 
 ## 미결정
 
