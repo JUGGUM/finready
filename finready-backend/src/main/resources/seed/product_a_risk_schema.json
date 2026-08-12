@@ -1,0 +1,279 @@
+{
+  "$schema": "finready/product-risk-schema/v2",
+  "note": "TRD v1.2.3 §4.5 시드 검증 대상. sourceText는 상품설명서 PDF 원문을 공백 정규화(NFC + 연속 공백 → 단일 공백)한 값이며, 9건 모두 지정 sourcePage에 정확히 1회 존재함을 검증했다(2026-08-12).",
+  "product": {
+    "id": "PROD_A",
+    "name": "FinReady 지수연계증권(ELS) 제1호",
+    "archetype": "NO_KNOCK_IN_STEP_DOWN",
+    "productRiskVersion": "A-2026-08-12-01",
+    "documentId": "DOC_PROD_A_V1",
+    "documentFileName": "FinReady_ProductA_상품설명서_v1.0.pdf",
+    "documentUrl": "/documents/PROD_A/v1.0.pdf",
+    "documentPageCount": 15,
+    "documentSha256": "5d355381abe028eb492f3c277236ee35a774150f4dbb24c289d2612ca8c5c47e",
+    "isLiveDemo": true,
+    "syntheticNotice": "2026 금융 AI Challenge 검증용 가상 상품. 실제 판매 상품이 아니며 특정 금융회사 상품을 복제하지 않음.",
+    "reference": {
+      "issuer": "(주)에프알증권 [가상]",
+      "issuerCreditRating": "A+",
+      "underlyings": [
+        "KOSPI200",
+        "S&P 500",
+        "EURO STOXX 50"
+      ],
+      "maturityYears": 3,
+      "barriers": [
+        "90%",
+        "90%",
+        "85%",
+        "85%",
+        "80%",
+        "65%(만기)"
+      ],
+      "knockInBarrier": null,
+      "couponAnnualPct": 7.2,
+      "maxLossPct": -100,
+      "riskGrade": "2등급 (높은 위험)",
+      "depositProtected": false
+    }
+  },
+  "risks": [
+    {
+      "riskId": "R01",
+      "category": "PRINCIPAL_LOSS",
+      "title": "원금 손실 가능성",
+      "fact": "본 증권은 원금이 보장되지 않으며, 만기까지 보유하더라도 만기평가일에 3개 기초자산 중 하나라도 최초기준가격의 65% 미만이면 원금 손실이 발생한다. 낙인(Knock-In) 배리어가 없다는 점은 손실 요건의 판단 방식이 다를 뿐 원금 보장을 의미하지 않는다.",
+      "coveragePolicy": "GATE_REQUIRED",
+      "understandingCheck": true,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 12,
+      "sourceText": "이 상품은 예금이 아니며 원금이 보장되지 않습니다. 만기까지 보유하더라도 만기평가일에 상환조건을 충족하지 못하면 투자원금의 손실이 발생할 수 있습니다.",
+      "fallbackQuestion": "이 상품에 1,000만원을 투자하고 만기까지 그대로 보유한다면, 최소한 투자한 1,000만원은 돌려받을 수 있다고 생각하시나요?",
+      "fallbackRecheckQuestion": "그렇다면 이 상품은 만기까지 계속 보유하더라도 원금 손실이 발생할 수 있는 상품일까요?",
+      "fallbackPlainExplanation": "이 상품은 원금이 보장되지 않습니다. 만기까지 계속 가지고 계셔도, 만기평가일에 세 지수 중 하나라도 처음 기준가격의 65%보다 낮으면 원금에서 손실이 납니다. 낙인 배리어가 없다는 것은 손실 여부를 판단하는 방식이 다르다는 뜻이지, 원금을 지켜준다는 뜻이 아닙니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          5,
+          7,
+          11
+        ],
+        "commonMisconceptions": [
+          "만기까지 보유하면 원금은 돌려받는다",
+          "낙인(Knock-In)이 없으니 원금이 보장된다",
+          "중간에 팔지만 않으면 손해는 안 본다",
+          "예금처럼 원금은 지켜지고 이자만 달라진다"
+        ]
+      }
+    },
+    {
+      "riskId": "R02",
+      "category": "MAXIMUM_LOSS",
+      "title": "최대 손실 범위",
+      "fact": "최대 손실률은 -100%로 투자원금 전액을 손실할 수 있다. 손실 규모에 하한선이나 완충 장치가 없으며, 최저 성과 기초자산의 하락률이 그대로 반영된다. 최대 이익은 3년간 21.6%로 제한되어 손익이 비대칭적이다.",
+      "coveragePolicy": "GATE_REQUIRED",
+      "understandingCheck": true,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 11,
+      "sourceText": "만기평가일에 3개 기초자산 중 하나라도 최초기준가격의 65% 미만인 경우, 상환금액은 세 기초자산 중 최저 성과 기초자산의 하락률을 그대로 반영하여 결정됩니다. 손실 규모에 별도의 하한선이나 완충 장치는 존재하지 않습니다.",
+      "fallbackQuestion": "만약 이 상품에서 손실이 난다면, 손실이 어느 정도까지 커질 수 있다고 이해하고 계신가요?",
+      "fallbackRecheckQuestion": "예를 들어 기초자산이 기준가격의 30% 수준까지 떨어진 상태로 만기가 되면, 1,000만원 중 얼마를 돌려받게 될까요?",
+      "fallbackPlainExplanation": "손실이 날 경우 최대 손실률은 -100%입니다. 투자하신 원금 전액을 잃을 수 있다는 뜻입니다. 손실 규모에 하한선이나 완충 장치는 없으며, 세 기초자산 중 가장 많이 떨어진 것의 하락률이 그대로 반영됩니다. 반면 최대 이익은 3년간 21.6%로 제한되어 있습니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          9,
+          10
+        ],
+        "commonMisconceptions": [
+          "손실이 나도 수익률만큼만 손해 본다",
+          "손실은 최대 10~20% 정도일 것이다",
+          "원금의 절반은 보장된다"
+        ]
+      }
+    },
+    {
+      "riskId": "R03",
+      "category": "EARLY_REDEMPTION",
+      "title": "조기상환 조건",
+      "fact": "자동조기상환은 6개월마다 돌아오는 평가일에 3개 기초자산 모두의 종가가 해당 차수 배리어(90/90/85/85/80%) 이상인 경우에만 발생하며, 특정 시점의 상환을 보장하지 않는다. 조건 미충족 시 상환 없이 다음 차수로 이월되어 투자금이 만기까지 묶일 수 있다.",
+      "coveragePolicy": "GATE_REQUIRED",
+      "understandingCheck": true,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 6,
+      "sourceText": "자동조기상환은 조건이 충족될 경우에만 발생하며, 특정 시점의 상환을 보장하지 않습니다. 조건이 충족되지 않으면 상환 없이 다음 차수로 이월되며, 투자금은 만기까지 계속 묶일 수 있습니다.",
+      "fallbackQuestion": "6개월 뒤 첫 번째 평가일이 되면 투자금을 돌려받을 수 있다고 생각하시나요?",
+      "fallbackRecheckQuestion": "6개월 뒤 조기상환 조건이 충족되지 않으면 투자금은 어떻게 되나요?",
+      "fallbackPlainExplanation": "조기상환은 6개월마다 돌아오는 평가일에 세 기초자산이 모두 그 차수의 기준(90%, 90%, 85%, 85%, 80%) 이상일 때만 이루어집니다. 조건이 맞지 않으면 상환 없이 다음 차수로 넘어가고, 투자금은 만기까지 묶일 수 있습니다. 특정 시점의 상환이 보장되지 않습니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          5,
+          8
+        ],
+        "commonMisconceptions": [
+          "6개월마다 원금과 이자를 받을 수 있다",
+          "조기상환은 내가 원할 때 신청하는 것이다",
+          "6개월 뒤에는 무조건 돈이 나온다"
+        ]
+      }
+    },
+    {
+      "riskId": "R04",
+      "category": "MATURITY_REDEMPTION",
+      "title": "만기상환 조건",
+      "fact": "만기상환금액은 만기평가일 종가라는 단일 시점을 기준으로, 세 기초자산 중 성과가 가장 낮은 하나를 기준으로 산정된다. 나머지 두 기초자산이 상승했더라도 손실을 상쇄하지 않는다.",
+      "coveragePolicy": "GATE_REQUIRED",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 7,
+      "sourceText": "만기상환금액은 세 기초자산 중 성과가 가장 낮은 기초자산 하나를 기준으로 산정됩니다. 나머지 두 기초자산이 상승하였더라도 손실을 상쇄하지 않습니다.",
+      "fallbackQuestion": "만기에 세 개 지수 중 두 개가 오르고 하나만 크게 떨어졌다면, 상환금액은 어떻게 결정될까요?",
+      "fallbackRecheckQuestion": "세 지수 중 가장 많이 떨어진 지수 하나가 상환금액을 결정한다는 점, 맞게 이해하신 걸까요?",
+      "fallbackPlainExplanation": "만기상환금액은 만기평가일 종가 하나만을 기준으로, 세 기초자산 중 성과가 가장 낮은 하나로 정해집니다. 나머지 두 기초자산이 올랐더라도 그 손실을 메워주지 않습니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          9
+        ],
+        "commonMisconceptions": [
+          "세 지수의 평균으로 계산한다",
+          "하나만 떨어져도 나머지가 오르면 괜찮다",
+          "투자기간 평균 가격으로 계산한다"
+        ]
+      }
+    },
+    {
+      "riskId": "R05",
+      "category": "EARLY_TERMINATION",
+      "title": "투자자 요청 중도상환(환매) 위험",
+      "fact": "중도상환 시 지급 금액은 투자원금과 무관하게 발행회사가 산정한 공정가액을 기준으로 결정되며 투자원금보다 적을 수 있다. 중도상환 수수료 3.0%(6개월 미만 5.0%)가 손실 발생 시에도 부과된다.",
+      "coveragePolicy": "WARN_ONLY",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 13,
+      "sourceText": "중도상환 시 지급되는 금액은 투자원금과 무관하게 결정되며, 투자원금보다 적을 수 있습니다. 기초자산 가격이 하락한 시점에 중도상환을 신청하는 경우 원금 손실이 크게 확대될 수 있습니다.",
+      "fallbackQuestion": "급하게 돈이 필요해서 만기 전에 이 상품을 해지하면 투자한 금액을 그대로 돌려받을 수 있을까요?",
+      "fallbackRecheckQuestion": "중간에 해지하면 원금보다 적은 금액을 받을 수도 있다는 점은 이해하셨을까요?",
+      "fallbackPlainExplanation": "만기 전에 중도상환을 신청하시면, 지급되는 금액은 투자원금과 무관하게 발행회사가 산정한 공정가액으로 정해지며 투자원금보다 적을 수 있습니다. 기초자산 가격이 떨어진 시점에 신청하면 손실이 크게 확대될 수 있습니다. 중도상환 수수료 3.0%(6개월 미만 5.0%)는 손실이 난 경우에도 부과됩니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          12
+        ],
+        "commonMisconceptions": [
+          "예금처럼 중도해지하면 이자만 못 받는다",
+          "언제든 원금은 찾을 수 있다",
+          "수수료만 내면 원금은 나온다"
+        ]
+      }
+    },
+    {
+      "riskId": "R06",
+      "category": "UNDERLYING_ASSET",
+      "title": "기초자산 및 가격변동 영향",
+      "fact": "상환 조건은 3개 기초자산 모두를 기준으로 판단하며, 하나라도 조건을 충족하지 못하면 해당 차수의 조기상환이 이루어지지 않는다. 기초자산 수가 많을수록 모든 기초자산이 동시에 조건을 충족할 확률은 낮아진다.",
+      "coveragePolicy": "WARN_ONLY",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 4,
+      "sourceText": "상환 조건의 충족 여부는 기초자산 3개 모두를 기준으로 판단합니다. 3개 중 하나라도 조건을 충족하지 못하면 해당 차수의 조기상환은 이루어지지 않습니다.",
+      "fallbackQuestion": "이 상품의 수익은 세 개 지수 중 어떤 것을 기준으로 결정되나요?",
+      "fallbackRecheckQuestion": "세 지수 모두가 조건을 충족해야 한다는 점은 확인되셨을까요?",
+      "fallbackPlainExplanation": "상환 조건은 세 기초자산 모두를 기준으로 판단합니다. 세 개 중 하나라도 조건을 채우지 못하면 그 차수의 조기상환은 이루어지지 않습니다. 기초자산 수가 많을수록 모두가 동시에 조건을 채울 확률은 낮아집니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          5
+        ],
+        "commonMisconceptions": [
+          "지수가 많을수록 더 안전하다",
+          "하나만 조건을 만족해도 된다"
+        ]
+      }
+    },
+    {
+      "riskId": "R07",
+      "category": "ISSUER_CREDIT",
+      "title": "발행인 신용위험",
+      "fact": "본 증권은 발행회사의 신용을 바탕으로 발행되는 무담보 채무증권으로, 발행회사에 부도·파산 등 신용사건이 발생하면 기초자산의 성과와 관계없이 원금 및 수익의 전부 또는 일부를 지급받지 못할 수 있다.",
+      "coveragePolicy": "WARN_ONLY",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 14,
+      "sourceText": "발행회사에 부도, 파산, 채무불이행 등의 신용사건이 발생하는 경우 기초자산의 성과와 관계없이 원금 및 수익의 전부 또는 일부를 지급받지 못할 수 있습니다.",
+      "fallbackQuestion": "만약 이 증권을 발행한 증권회사가 파산한다면 투자금은 어떻게 될까요?",
+      "fallbackRecheckQuestion": "발행 증권사에 문제가 생기면 지수가 올랐더라도 돈을 못 받을 수 있다는 점, 이해되셨을까요?",
+      "fallbackPlainExplanation": "이 증권은 발행회사의 신용을 바탕으로 발행되는 무담보 채무증권입니다. 발행회사에 부도나 파산 같은 신용사건이 생기면, 기초자산 성과와 관계없이 원금과 수익의 전부 또는 일부를 받지 못할 수 있습니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          12
+        ],
+        "commonMisconceptions": [
+          "증권사가 망해도 내 돈은 따로 보관된다",
+          "지수만 오르면 무조건 받는다"
+        ]
+      }
+    },
+    {
+      "riskId": "R08",
+      "category": "DEPOSIT_PROTECTION",
+      "title": "예금자보호 여부",
+      "fact": "본 증권은 예금자보호법에 따라 보호되지 않으며 예금보험공사의 보호 대상이 아니다.",
+      "coveragePolicy": "GATE_REQUIRED",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 14,
+      "sourceText": "본 증권은 예금자보호법에 따라 보호되지 않습니다. 은행 예금과 달리 예금보험공사의 보호 대상이 아니며, 발행회사가 파산하는 경우 투자금을 돌려받지 못할 수 있습니다.",
+      "fallbackQuestion": "이 상품도 은행 예금처럼 5천만원까지 예금자보호가 되는 상품일까요?",
+      "fallbackRecheckQuestion": "이 상품이 예금자보호 대상이 아니라는 점은 확인되셨을까요?",
+      "fallbackPlainExplanation": "이 상품은 예금자보호법에 따라 보호되지 않습니다. 은행 예금과 달리 예금보험공사의 보호 대상이 아니며, 발행회사가 파산하면 투자금을 돌려받지 못할 수 있습니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          2,
+          3
+        ],
+        "commonMisconceptions": [
+          "증권사 상품도 5천만원까지 보호된다",
+          "은행에서 가입하면 예금자보호가 된다"
+        ]
+      }
+    },
+    {
+      "riskId": "R09",
+      "category": "FEE_COST",
+      "title": "수수료 및 비용",
+      "fact": "총 보수 연 0.80%가 발행가격에 반영되어 별도 청구되지 않으나 실질 수익에 영향을 미치며, 중도상환 시 공정가액의 3.0%(6개월 미만 5.0%)가 손실 발생 시에도 차감된다.",
+      "coveragePolicy": "WARN_ONLY",
+      "understandingCheck": false,
+      "sourceDocumentId": "DOC_PROD_A_V1",
+      "sourcePage": 14,
+      "sourceText": "총 보수는 발행가격에 이미 반영되어 있으므로 투자자가 별도로 납입하지 않으나, 그만큼 상환 조건에 반영되어 실질 수익에 영향을 미칩니다.",
+      "fallbackQuestion": "이 상품에 가입할 때 따로 내야 하는 수수료가 있다고 이해하고 계신가요?",
+      "fallbackRecheckQuestion": "수수료가 눈에 보이지 않아도 수익률에 이미 반영되어 있다는 점은 이해되셨을까요?",
+      "fallbackPlainExplanation": "총 보수 연 0.80%는 발행가격에 이미 반영되어 있어 따로 내지는 않으시지만, 그만큼 상환 조건에 반영되어 실질 수익에 영향을 줍니다. 중도상환 시에는 공정가액의 3.0%(6개월 미만 5.0%)가 손실이 난 경우에도 차감됩니다.",
+      "verifiedAt": "2026-08-12",
+      "verifiedBy": "TEAM",
+      "reference": {
+        "supportingPages": [
+          3,
+          13
+        ],
+        "commonMisconceptions": [
+          "수수료가 전혀 없다",
+          "중도해지해도 수수료는 손실이 날 때는 면제된다"
+        ]
+      }
+    }
+  ]
+}
