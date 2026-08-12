@@ -17,8 +17,11 @@ finready-backend/build/
 finready-backend/out/
 finready-backend/bin/
 finready-backend/HELP.md
-finready-backend/**/application-local.yml
+# .yml / .yaml 양쪽을 막는다. .yml만 두면 application-local.yaml이 그대로 커밋된다
 **/application-local.yml
+**/application-local.yaml
+**/application-*-local.yml
+**/application-*-local.yaml
 
 # Frontend (Next.js / Node)
 finready-frontend/.next/
