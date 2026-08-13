@@ -74,6 +74,14 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   `Dockerfile`은 Render 배포 전용이다(아래 참조).
 - 테스트에서 실제 LLM을 호출하지 않는다. 평가 모듈만 `@Tag("evaluation")`으로 분리
 - 큰 변경 전에는 계획을 먼저 제시하고 승인을 받을 것
+- **`columnDefinition`은 `ddl-auto: validate`에 영향을 주지 않는다.** DDL 생성용이라
+  JDBC 타입 코드를 바꾸지 못한다. DB 타입 코드가 Java 기본 매핑과 다른 컬럼은
+  `@JdbcTypeCode`로 지정해야 한다. 실제로 `product.document_sha256`의 `char(64)`에서
+  `found [bpchar (Types#CHAR)], but expecting [char(64) (Types#VARCHAR)]`로 걸렸고
+  `@JdbcTypeCode(SqlTypes.CHAR)`로 해결했다 (2026-08-13)
+- **엔티티 검증은 기동으로만 된다.** `gradlew build`는 컴파일만 확인한다.
+  Hibernate 검증기는 불일치를 만나면 예외를 던져 **한 번에 하나만** 보여주므로,
+  엔티티를 몰아서 쓰면 고치고 재기동을 반복하게 된다. DDL 섹션 단위로 나눠 진행할 것
 
 ## Docker (배포 전용)
 
@@ -111,6 +119,10 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   로컬에서 적용한 v1·v2를 그대로 인식했다는 뜻이라 스키마가 하나임이 확인됐다.
   `SPRING_PROFILES_ACTIVE`를 넣지 않아 **default 프로파일로 뜬다(의도한 동작)**.
   `application.yaml`의 `local` 문서가 안 걸리므로 로깅은 INFO/WARN이다 (2026-08-13)
+- **JPA 엔티티 14개 + enum 16개** — 패키지 구조는 TRD §2.1
+  (`product`·`session`·`coverage`·`understanding`·`explanation`·`audit`·`ai`·`common`).
+  `local` 기동으로 `ddl-auto: validate` 통과 확인 = V1 DDL과 컬럼·타입·nullable 일치.
+  `customer_profile`은 TRD §2.1 목록에 없어 시드라는 성격을 따라 `product/`에 뒀다 (2026-08-13)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -125,16 +137,20 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   `public`의 기존 앱 테이블은 건드리지 않음
 
 ### 다음 순서
-1. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
-2. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
+1. **리포지토리 + 시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
+   → 엔티티는 있으나 리포지토리가 없어 아직 읽기·쓰기 경로가 없다
    → `customerProfile`이 현재 `demo_seed.json`(테스트 리소스)에만 있다.
    프로덕션 시드로도 필요하므로 배치 방식을 먼저 결정할 것
-3. `GET /api/products/demo` (F01)
-4. 세션 / Revision / StateMachine (TRD §5.1)
-5. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
-6. Understanding / 재설명 / Staff Resolution (F04~F07)
-7. Report + Close + Audit (F08)
-8. 오프라인 평가 모듈 + Rule baseline
+2. `GET /api/products/demo` (F01)
+3. 세션 / Revision / StateMachine (TRD §5.1)
+   → `ConsultationSession`·`RiskWorkflowState`에 상태 전이 메서드를 일부러 두지 않았다.
+   규칙 7대로 StateMachine과 함께 설계할 것
+4. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+   → `CoverageResult` 생성자는 ck_provenance_consistency /
+   ck_explained_requires_verification 조합을 강제하지 않는다. Verifier에서 팩토리로 막을 것
+5. Understanding / 재설명 / Staff Resolution (F04~F07)
+6. Report + Close + Audit (F08)
+7. 오프라인 평가 모듈 + Rule baseline
 
 > **병행(배포 연동)**: 프론트에 배포 URL 전달 →
 > 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
@@ -142,7 +158,7 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 > 현재 기본값이 `http://localhost:3000`이라 그대로 두면 배포 프론트에서 CORS가 막힌다.
 
 > TRD §18 Step 1 DoD는 `연결 + Flyway + 시드 로더 + GET /products/demo` +
-> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 2~3번에 남아 있다.
+> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 1~2번에 남아 있다.
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
 - 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
@@ -154,6 +170,11 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 - LLM 모델·요금제 (심사 5일 quota 산정 필요) — TRD D-02, Step 5 이전 결정
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
+- `CoverageResult`·`SessionQuestion`에 `@Immutable`을 붙일지.
+  TRD §4.2("정정 시 이전 행을 지우지 않는다")와 §4.6("멱등 발급")을 그대로 읽으면
+  행 전체가 append-only다. 다만 규칙 1은 `classifier_status`·`ai_status` 두 컬럼만
+  명시하므로 지금은 `updatable = false`까지만 걸어뒀다.
+  `ConsultationRevision`·`AuditEvent`는 근거가 명확해 이미 `@Immutable`이다
 
 ## 처리 대기 (문서 동기화)
 
