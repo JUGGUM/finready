@@ -105,6 +105,12 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   Gradle 9.5.1의 Kotlin 2.3.20 메타데이터를 못 읽어 `build.gradle.kts` 전체가
   빨간줄이었다. Boot 4가 요구하는 최소 Gradle(8.14)조차 Kotlin 2.0.21이라
   다운그레이드로는 해결 불가였다 (2026-08-12)
+- **Render 배포 완료** — https://finready-backend.onrender.com
+  (Singapore / Docker / Starter, Root Directory `finready-backend`).
+  `/actuator/health` 200 확인. 배포 로그에서 Flyway `Current version: 2, up to date` —
+  로컬에서 적용한 v1·v2를 그대로 인식했다는 뜻이라 스키마가 하나임이 확인됐다.
+  `SPRING_PROFILES_ACTIVE`를 넣지 않아 **default 프로파일로 뜬다(의도한 동작)**.
+  `application.yaml`의 `local` 문서가 안 걸리므로 로깅은 INFO/WARN이다 (2026-08-13)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -119,22 +125,24 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   `public`의 기존 앱 테이블은 건드리지 않음
 
 ### 다음 순서
-1. **Render 배포 관통** (Root Directory `finready-backend`, Build Filter `finready-backend/**`)
-   → 환경변수 `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` / `CORS_ALLOWED_ORIGINS`
-   → `/actuator/health` 200 확인 → 프론트에 배포 URL 전달
-2. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
-3. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
+1. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
+2. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
    → `customerProfile`이 현재 `demo_seed.json`(테스트 리소스)에만 있다.
    프로덕션 시드로도 필요하므로 배치 방식을 먼저 결정할 것
-4. `GET /api/products/demo` (F01)
-5. 세션 / Revision / StateMachine (TRD §5.1)
-6. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
-7. Understanding / 재설명 / Staff Resolution (F04~F07)
-8. Report + Close + Audit (F08)
-9. 오프라인 평가 모듈 + Rule baseline
+3. `GET /api/products/demo` (F01)
+4. 세션 / Revision / StateMachine (TRD §5.1)
+5. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+6. Understanding / 재설명 / Staff Resolution (F04~F07)
+7. Report + Close + Audit (F08)
+8. 오프라인 평가 모듈 + Rule baseline
+
+> **병행(배포 연동)**: 프론트에 배포 URL 전달 →
+> 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
+> 백엔드 `CORS_ALLOWED_ORIGINS`에 프론트 배포 도메인 추가.
+> 현재 기본값이 `http://localhost:3000`이라 그대로 두면 배포 프론트에서 CORS가 막힌다.
 
 > TRD §18 Step 1 DoD는 `연결 + Flyway + 시드 로더 + GET /products/demo` +
-> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 2~4번에 남아 있다.
+> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 2~3번에 남아 있다.
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
 - 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성

@@ -428,6 +428,10 @@ pnpm lint             # eslint
 ## 배포
 
 **백엔드** — Render Web Service (Singapore), 저장소의 `Dockerfile` 사용.
+배포 완료: **https://finready-backend.onrender.com** (Starter 플랜, 헬스체크
+`GET /actuator/health`). `SPRING_PROFILES_ACTIVE`를 넣지 않아 default 프로파일로
+뜨며, 이는 의도한 동작이다(`local` 문서가 안 걸려 로깅이 INFO/WARN).
+
 모노레포이므로 서비스 설정에서 아래 두 값을 지정한다.
 
 - Root Directory: `finready-backend`
@@ -506,6 +510,10 @@ main·safety 두 시나리오 모두 끝까지 통과한다.
 - `seed/product_a_risk_schema.json` — PRD v1.3.1 정책표 반영본
 - 상품설명서 PDF 배치 및 SHA-256 확인
 - `src/test/resources/eval/demo_seed.json` — Gate 시나리오 6건
+- **로컬 DB 연결 + Flyway v1·v2 적용** — Supavisor Session Pooler로 `local` 기동,
+  테이블 14개 + `flyway_schema_history` 생성 확인 (2026-08-12)
+- **Render 배포** — https://finready-backend.onrender.com,
+  `/actuator/health` 200, Flyway `Current version: 2, up to date` (2026-08-13)
 
 **검증 완료 (2026-08-12)**
 
@@ -516,16 +524,14 @@ main·safety 두 시나리오 모두 끝까지 통과한다.
 
 **다음 순서**
 
-1. Run Configuration 환경변수에 실제 접속 정보 → `local` 기동 → Flyway 14개 테이블 생성 확인 → TRD §3.4 연결 검증 5항목
-2. Render 배포 관통
-3. JPA 엔티티 14개 (V1 DDL과 컬럼명·제약이 정확히 일치해야 함 — `ddl-auto: validate`)
-4. 시드 로더 + 검증기 (TRD §4.5, 실패 시 기동 중단)
-5. `GET /api/products/demo` (F01)
-6. 세션 / Revision / StateMachine (TRD §5.1)
-7. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
-8. Understanding / 재설명 / Staff Resolution (F04~F07)
-9. Report + Close + Audit (F08)
-10. 오프라인 평가 모듈 + Rule baseline
+1. JPA 엔티티 14개 (V1 DDL과 컬럼명·제약이 정확히 일치해야 함 — `ddl-auto: validate`)
+2. 시드 로더 + 검증기 (TRD §4.5, 실패 시 기동 중단)
+3. `GET /api/products/demo` (F01)
+4. 세션 / Revision / StateMachine (TRD §5.1)
+5. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+6. Understanding / 재설명 / Staff Resolution (F04~F07)
+7. Report + Close + Audit (F08)
+8. 오프라인 평가 모듈 + Rule baseline
 
 ### 데이터셋 (코드와 병행)
 
