@@ -1,0 +1,34 @@
+{
+  "$schema": "finready/customer-profile-seed/v1",
+  "note": "데모용 고객 preset. GET /api/products/demo 의 customers 필드로 내려간다(openapi v1.4.2 DemoProductResponse.required). TRD §4.1 'Synthetic only' — 실존 인물이 아니다. eval/demo_seed.json 의 customerProfiles 와 같은 값을 쓴다.",
+  "customerProfiles": [
+    {
+      "id": "CUST_A",
+      "label": "고령·저경험 고객 (대표 데모)",
+      "ageGroup": "70대",
+      "investmentExperience": "LOW",
+      "financialLiteracy": "BASIC",
+      "explanationLevel": "EASY",
+      "synthetic": true,
+      "note": "만 65세 이상 고령투자자 — 상품설명서 15페이지 숙려제도 안내 대상"
+    },
+    {
+      "id": "CUST_B",
+      "label": "중간 경험 고객",
+      "ageGroup": "30대",
+      "investmentExperience": "MEDIUM",
+      "financialLiteracy": "NORMAL",
+      "explanationLevel": "NORMAL",
+      "synthetic": true
+    },
+    {
+      "id": "CUST_C",
+      "label": "용어는 알지만 구조 이해가 얕은 고객",
+      "ageGroup": "50대",
+      "investmentExperience": "MEDIUM",
+      "financialLiteracy": "NORMAL",
+      "explanationLevel": "NORMAL",
+      "synthetic": true
+    }
+  ]
+}

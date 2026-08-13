@@ -73,6 +73,7 @@ finready:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
   seed:
     path: classpath:seed/product_a_risk_schema.json
+    customer-path: classpath:seed/customer_profiles.json
     fail-fast: true                     # 시드/PDF 해시 검증 실패 시 기동 중단 (TRD §4.5)
   document:
     base-path: classpath:static/documents
