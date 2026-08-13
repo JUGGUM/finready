@@ -11,6 +11,15 @@ Flyway / PostgreSQL(Supabase, 스키마 `finready`) / Render 배포(Singapore)
 Boot 4는 Jackson 3(`tools.jackson`)를 쓴다. Boot 3 예제를 그대로 가져오면 안 된다.
 springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 
+> **Boot 4 모듈화 주의.** Boot 4는 자동설정을 기술별 모듈로 쪼갰다.
+> 라이브러리(`flyway-core` 등)만 넣으면 자동설정이 **조용히 안 걸린다.**
+> 반드시 `spring-boot-starter-*` 형태로 넣을 것. 앞으로 Redis·Kafka 등을
+> 추가할 때도 동일하다.
+>
+> 판별법: 기동 시 `debug: true`로 CONDITIONS EVALUATION REPORT를 찍었을 때
+> 해당 기능 이름이 **Positive에도 Negative에도 없으면 = 전용 스타터 누락**이다.
+> Negative에 있으면 조건 문제다.
+
 > **TRD §1 기술스택 표는 `Java 21 (LTS) / Spring Boot 3.x`로 적혀 있다.**
 > 코드·Dockerfile·이 문서가 Java 25 / Boot 4.0.7이므로 **TRD 쪽이 낡았다.**
 > 결정: 코드를 유지하고 TRD §1을 정정한다(→ v1.2.4). 아직 반영 전이므로
@@ -57,10 +66,26 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   ./gradlew build
   ```
   Windows는 `.\gradlew.bat build`.
-- 로컬 실행은 `local` 프로파일. 접속 정보는 `application-local.yaml`(git 제외).
-  템플릿은 `application-local.yaml.example`.
+- 로컬 실행은 `local` 프로파일. 접속 정보는 IntelliJ Run Configuration
+  환경변수로 관리한다. 참고용 템플릿은 `application-local.yaml.example`.
+  Run Configuration에 `SPRING_PROFILES_ACTIVE=local` + `DB_URL` /
+  `DB_USERNAME` / `DB_PASSWORD`를 한 번 넣어두면 이후 초록 버튼으로 그냥 실행된다.
+- 로컬 개발에 Docker는 필요 없다. DB가 원격 Supabase라 띄울 컨테이너가 없다.
+  `Dockerfile`은 Render 배포 전용이다(아래 참조).
 - 테스트에서 실제 LLM을 호출하지 않는다. 평가 모듈만 `@Tag("evaluation")`으로 분리
 - 큰 변경 전에는 계획을 먼저 제시하고 승인을 받을 것
+
+## Docker (배포 전용)
+
+`finready-backend/Dockerfile`이 Render 빌드에 쓰인다. 로컬에서는 실행할 일이 없다.
+
+- 빌드 스테이지: `eclipse-temurin:25-jdk` + **Gradle Wrapper**
+  (gradle 공식 이미지를 안 쓴 이유: 래퍼가 Gradle 버전을 저장소에 고정하므로
+  로컬과 컨테이너 빌드가 항상 일치한다)
+- 런타임 스테이지: `eclipse-temurin:25-jre`, 비-root 사용자
+- Render가 주입하는 `PORT` 환경변수를 사용
+- **모노레포 주의**: Render 서비스 설정에서 Root Directory를 `finready-backend`로
+  지정해야 `COPY` 경로가 맞는다
 
 ## 현재 진행 상황
 
@@ -73,6 +98,13 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   (파일명에 `.pdf` 확장자가 없다. 시드의 `documentFileName`과 로더에서 맞출 것)
 - `src/test/resources/eval/demo_seed.json` — Gate 시나리오 6건 검증 완료
 - 시드 sourceText 9건이 PDF 지정 페이지에 정확히 1회 존재함을 확인 (2026-08-12)
+- **로컬 DB 연결 성공** — Supavisor Session Pooler,
+  user는 `finready_backend.{project-ref}` 형식 (접두사만 전용 role로 교체) (2026-08-12)
+- **Flyway 마이그레이션 v1·v2 적용 완료** — 테이블 14개 + `flyway_schema_history` 생성 (2026-08-12)
+- **IntelliJ 2026.2.1 Community로 교체** — 이전 2023.2.5의 번들 Kotlin 1.9.24가
+  Gradle 9.5.1의 Kotlin 2.3.20 메타데이터를 못 읽어 `build.gradle.kts` 전체가
+  빨간줄이었다. Boot 4가 요구하는 최소 Gradle(8.14)조차 Kotlin 2.0.21이라
+  다운그레이드로는 해결 불가였다 (2026-08-12)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -81,24 +113,28 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 - PDF SHA-256이 기재값과 일치
 - V2 트리거가 `before update or delete`만 잡고 INSERT를 넣지 않음 (TRD §4.4가 경고한 사고 회피됨)
 - JDK 25로 `gradlew build` BUILD SUCCESSFUL
+- **append-only 트리거 실검증**: `audit_event` INSERT 성공 /
+  UPDATE는 `[23001] append-only table: audit_event`로 차단됨 (TRD §4.4 충족)
+- **스키마 격리**: 마이그레이션·`flyway_schema_history` 모두 `finready` 스키마에 생성.
+  `public`의 기존 앱 테이블은 건드리지 않음
 
 ### 다음 순서
-1. `application-local.yaml`에 **실제** Supabase Session Pooler 접속 정보 채우기
-   → `local` 프로파일 기동 → Flyway가 테이블 14개 생성 확인
-   → TRD §3.4 연결 검증 5항목 실행
-2. Render 배포 관통 (Root Directory `finready-backend`, Build Filter `finready-backend/**`)
-3. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
-4. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
-5. `GET /api/products/demo` (F01)
-6. 세션 / Revision / StateMachine (TRD §5.1)
-7. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
-8. Understanding / 재설명 / Staff Resolution (F04~F07)
-9. Report + Close + Audit (F08)
-10. 오프라인 평가 모듈 + Rule baseline
+1. **Render 배포 관통** (Root Directory `finready-backend`, Build Filter `finready-backend/**`)
+   → 환경변수 `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` / `CORS_ALLOWED_ORIGINS`
+   → `/actuator/health` 200 확인 → 프론트에 배포 URL 전달
+2. **JPA 엔티티 14개** — V1 DDL과 컬럼명·제약이 정확히 일치해야 함 (`ddl-auto: validate`)
+3. **시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
+   → `customerProfile`이 현재 `demo_seed.json`(테스트 리소스)에만 있다.
+   프로덕션 시드로도 필요하므로 배치 방식을 먼저 결정할 것
+4. `GET /api/products/demo` (F01)
+5. 세션 / Revision / StateMachine (TRD §5.1)
+6. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+7. Understanding / 재설명 / Staff Resolution (F04~F07)
+8. Report + Close + Audit (F08)
+9. 오프라인 평가 모듈 + Rule baseline
 
-> CLAUDE.md의 1번은 TRD §18 Step 1보다 좁다. TRD Step 1 DoD는
-> `연결 + Flyway + 시드 로더 + GET /products/demo` + §3.4 검증 5항목까지다.
-> 나머지는 여기 4·5번에 있다.
+> TRD §18 Step 1 DoD는 `연결 + Flyway + 시드 로더 + GET /products/demo` +
+> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 2~4번에 남아 있다.
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
 - 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
@@ -109,5 +145,11 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 
 - LLM 모델·요금제 (심사 5일 quota 산정 필요) — TRD D-02, Step 5 이전 결정
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
-- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7)
+- `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
+
+## 처리 대기 (문서 동기화)
+
+- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7) → v1.2.4
 - `finready-frontend/contracts/openapi.yml` v1.4.1 → v1.4.2 동기화
+- PRD §12에 `POST /api/sessions/:id/recheck` 추가 (TRD §22-1)
+- PRD §17-3 "Coverage Hold-out" → "Coverage dev set" 정정 (TRD §22-2)

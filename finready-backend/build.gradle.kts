@@ -24,7 +24,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 
 	// 스키마 변경은 Flyway로만. JPA는 validate만 한다 (TRD §1)
-	implementation("org.flywaydb:flyway-core")
+	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	implementation("org.flywaydb:flyway-database-postgresql")
 	runtimeOnly("org.postgresql:postgresql")
 

@@ -333,15 +333,21 @@ cd finready-backend
 # 셸 기본값이 존재하지 않는 openjdk@17 경로라 gradlew가 즉시 죽는다.
 export JAVA_HOME=$(/usr/libexec/java_home -v 25)   # macOS
 
-# 접속 정보 준비 (git 제외 대상)
-cp src/main/resources/application-local.yaml.example src/main/resources/application-local.yaml
+# 접속 정보는 환경변수로 넣는다 (설정 파일에 두지 않는다)
 # → Supabase 대시보드 > Connect > Session pooler에서 복사해 채운다
+export DB_URL='jdbc:postgresql://<Session-Pooler-Host>:5432/postgres?currentSchema=finready&sslmode=require'
+export DB_USERNAME='finready_backend.<project-ref>'
+export DB_PASSWORD='<supabase-role-password>'
 
 ./gradlew build
 ./gradlew bootRun --args='--spring.profiles.active=local'
 ```
 
 Windows는 `.\gradlew.bat build`.
+
+IntelliJ에서는 Run Configuration 환경변수에 위 3개와 `SPRING_PROFILES_ACTIVE=local`을
+한 번 넣어두면 이후 초록 버튼으로 그냥 실행된다. 각 값의 형태는
+`src/main/resources/application-local.yaml.example`에 주석으로 적혀 있다.
 
 기동 시 시드(`product_a_risk_schema.json`)와 상품설명서 PDF의 SHA-256을 검증하며,
 실패하면 **부팅을 중단한다**(`finready.seed.fail-fast=true`).
@@ -510,7 +516,7 @@ main·safety 두 시나리오 모두 끝까지 통과한다.
 
 **다음 순서**
 
-1. `application-local.yaml`에 실제 접속 정보 → `local` 기동 → Flyway 14개 테이블 생성 확인 → TRD §3.4 연결 검증 5항목
+1. Run Configuration 환경변수에 실제 접속 정보 → `local` 기동 → Flyway 14개 테이블 생성 확인 → TRD §3.4 연결 검증 5항목
 2. Render 배포 관통
 3. JPA 엔티티 14개 (V1 DDL과 컬럼명·제약이 정확히 일치해야 함 — `ddl-auto: validate`)
 4. 시드 로더 + 검증기 (TRD §4.5, 실패 시 기동 중단)

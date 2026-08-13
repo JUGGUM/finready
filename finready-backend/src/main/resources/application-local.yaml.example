@@ -1,7 +1,8 @@
-# application-local.yaml 템플릿
+# 로컬 실행 환경변수 참고용 템플릿
 #
-# 이 파일을 application-local.yaml 로 복사한 뒤 실제 값을 채운다.
-# application-local.yaml 은 .gitignore 대상이다. 절대 커밋하지 않는다.
+# 복사해서 쓰는 파일이 아니다. application-local.yaml 은 두지 않는다.
+# 아래 값을 IntelliJ Run Configuration 환경변수에 직접 넣는다.
+#   SPRING_PROFILES_ACTIVE=local
 #
 # 접속 정보 위치: Supabase 대시보드 > Connect > Session pooler
 #   - 포트는 5432 (Session Mode). 6543(Transaction Pooler)은 prepared statement를
@@ -10,8 +11,6 @@
 #     finready_backend.{project-ref} 가 되는지 확인할 것. 안 되면
 #     Direct Connection + IPv4 애드온으로 폴백한다.
 
-spring:
-  datasource:
-    url: jdbc:postgresql://<Session-Pooler-Host>:5432/postgres?currentSchema=finready&sslmode=require
-    username: finready_backend.<project-ref>
-    password: <supabase-role-password>
+# DB_URL=jdbc:postgresql://<Session-Pooler-Host>:5432/postgres?currentSchema=finready&sslmode=require
+# DB_USERNAME=finready_backend.<project-ref>
+# DB_PASSWORD=<supabase-role-password>
