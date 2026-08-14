@@ -3,6 +3,8 @@ package io.finready.common;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -26,6 +28,31 @@ public class GlobalExceptionHandler {
 				.status(code.status())
 				.body(new ErrorResponse(code, ex.getMessage(), ex.riskId(),
 						code.recoverable(), RequestIdFilter.current()));
+	}
+
+	/**
+	 * consultation_session.version(@Version) 충돌. 더블 클릭으로 같은 세션을 동시에 고칠 때 난다
+	 * (TRD §5.3). recoverable=true 라 프론트가 재시도 버튼을 띄운다.
+	 */
+	@ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+	public ResponseEntity<ErrorResponse> handleOptimisticLock(ObjectOptimisticLockingFailureException ex) {
+		ErrorCode code = ErrorCode.CONCURRENT_SESSION_UPDATE;
+		log.warn("{} - 낙관적 락 충돌: {}", code, ex.getMessage());
+		return ResponseEntity
+				.status(code.status())
+				.body(new ErrorResponse(code, "다른 작업이 먼저 반영됐습니다. 새로고침 후 다시 시도해 주세요.",
+						null, code.recoverable(), RequestIdFilter.current()));
+	}
+
+	/** 본문이 JSON 이 아니거나 형식이 깨진 경우. 안 잡으면 500 으로 나간다 */
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ErrorResponse> handleUnreadableBody(HttpMessageNotReadableException ex) {
+		ErrorCode code = ErrorCode.INVALID_REQUEST;
+		log.warn("{} - 요청 본문을 읽지 못함", code);
+		return ResponseEntity
+				.status(code.status())
+				.body(new ErrorResponse(code, "요청 형식이 올바르지 않습니다.",
+						null, code.recoverable(), RequestIdFilter.current()));
 	}
 
 	@ExceptionHandler(Exception.class)

@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import io.finready.common.StateMachine;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -71,5 +72,17 @@ public class ConsultationSession {
 		this.productRiskVersion = productRiskVersion;
 		this.status = SessionStatus.DRAFT;
 		this.createdAt = OffsetDateTime.now();
+	}
+
+	/**
+	 * 상태를 바꾸는 유일한 경로. StateMachine 을 인자로 받는 이유는 규칙 7 때문이다 —
+	 * 이 메서드를 부르려면 StateMachine 을 손에 쥐어야 하고, StateMachine 은 반드시 전이표를 본다.
+	 * setter 를 열어두면 서비스가 전이표를 건너뛰고 상태를 바꾸는 경로가 생긴다.
+	 *
+	 * @throws io.finready.common.ApiException 허용되지 않은 전이면 INVALID_STATE_TRANSITION(409)
+	 */
+	public void transitionTo(SessionStatus to, StateMachine stateMachine) {
+		stateMachine.assertCanTransition(this.status, to);
+		this.status = to;
 	}
 }

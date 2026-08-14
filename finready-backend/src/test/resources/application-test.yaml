@@ -1,0 +1,47 @@
+# 테스트 프로파일. build.gradle.kts 의 test 태스크가 spring.profiles.active=test 를 준다.
+#
+# DB 를 붙이지 않는다. 여기 있는 테스트는 순수 단위 테스트와 @WebMvcTest 뿐이고,
+# 둘 다 DataSource 를 만들지 않는다. 실제 Postgres 가 필요한 검증(ck_* 제약,
+# append-only 트리거, updatable=false, @Version 락)은 F03 에서 Testcontainers 로 붙인다.
+#
+# SeedLoader 는 @Profile("!test") 라 여기서 돌지 않는다.
+
+# 실서버 접속값이 새어 들어오지 않도록 못 박는다. @WebMvcTest 는 DataSource 자동설정을
+# 제외하므로 실제로 쓰이지 않지만, 누가 @SpringBootTest 를 붙였을 때 운영 Supabase 로
+# 붙는 사고를 막는다.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/unused
+    username: unused
+    password: unused
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+finready:
+  cors:
+    allowed-origins: http://localhost:3000
+  seed:
+    path: classpath:seed/product_a_risk_schema.json
+    customer-path: classpath:seed/customer_profiles.json
+    fail-fast: true
+  document:
+    base-path: classpath:static/documents
+  evidence:
+    min-length: 15
+    max-length: 300
+  understanding:
+    max-attempts: 2
+  ai:
+    api-key: test-key-not-used
+    model: test-model
+    base-url: http://localhost:0
+    timeout-seconds: 30
+    max-retries: 1
+    temperature: 0
+
+logging:
+  level:
+    io.finready: INFO

@@ -59,6 +59,13 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 
 ## 작업할 때
 
+- **저장소를 한글·공백 경로에 두지 말 것.** Windows에서 `gradlew test`가 통째로 깨진다.
+  Gradle이 테스트 워커 클래스패스를 `@argfile`로 넘기는데, Gradle은 UTF-8로 쓰고
+  JVM 런처는 네이티브 인코딩(cp949)으로 읽어서 경로가 깨진다. 증상은
+  모든 테스트 클래스에 `ClassNotFoundException`이며, **컴파일은 멀쩡히 통과한다.**
+  워커 명령줄의 `-Dfile.encoding=UTF-8`은 argfile을 읽은 뒤 적용돼 소용없다.
+  이 문제로 `D:\공부\finready` → `D:\dev\finready`로 옮겼다 (2026-08-14).
+  F03의 Testcontainers도 Docker 볼륨 마운트에서 같은 계열 문제를 겪는다.
 - **로컬 실행 전 JAVA_HOME을 JDK 25로 잡을 것.** 셸 기본값이 존재하지 않는
   openjdk@17 경로라 gradlew가 즉시 죽는다.
   ```bash
@@ -70,8 +77,11 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   환경변수로 관리한다. 참고용 템플릿은 `application-local.yaml.example`.
   Run Configuration에 `SPRING_PROFILES_ACTIVE=local` + `DB_URL` /
   `DB_USERNAME` / `DB_PASSWORD`를 한 번 넣어두면 이후 초록 버튼으로 그냥 실행된다.
-- 로컬 개발에 Docker는 필요 없다. DB가 원격 Supabase라 띄울 컨테이너가 없다.
+- **앱을 띄우는 데는 Docker가 필요 없다.** DB가 원격 Supabase라 띄울 컨테이너가 없다.
   `Dockerfile`은 Render 배포 전용이다(아래 참조).
+  다만 **F03부터는 통합 테스트에 Docker가 필요하다** — DB 제약(`ck_*`)·append-only 트리거·
+  `updatable=false`·`@Version` 락은 실제 Postgres 없이는 검증되지 않는다.
+  Testcontainers를 그때 붙인다. Render 빌드는 `Dockerfile`이 `-x test`라 영향 없다.
 - 테스트에서 실제 LLM을 호출하지 않는다. 평가 모듈만 `@Tag("evaluation")`으로 분리
 - 큰 변경 전에는 계획을 먼저 제시하고 승인을 받을 것
 - **`columnDefinition`은 `ddl-auto: validate`에 영향을 주지 않는다.** DDL 생성용이라
@@ -82,8 +92,38 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 - **엔티티 검증은 기동으로만 된다.** `gradlew build`는 컴파일만 확인한다.
   Hibernate 검증기는 불일치를 만나면 예외를 던져 **한 번에 하나만** 보여주므로,
   엔티티를 몰아서 쓰면 고치고 재기동을 반복하게 된다. DDL 섹션 단위로 나눠 진행할 것
+- **Boot 4는 테스트 슬라이스도 모듈로 쪼갰다.** `@WebMvcTest`가
+  `spring-boot-starter-test`에 없다. `spring-boot-starter-webmvc-test`를 따로 넣어야 한다.
+  패키지도 `org.springframework.boot.webmvc.test.autoconfigure`로 옮겼다(Boot 3과 다름).
+  `@MockBean`은 없어졌고 `@MockitoBean`
+  (`org.springframework.test.context.bean.override.mockito`)을 쓴다.
 
-## Docker (배포 전용)
+## 테스트 전략
+
+**하이브리드.** 지금은 DB 없이, F03에서 실제 Postgres를 붙인다.
+
+| 단계 | 방식 | 검증 범위 |
+|---|---|---|
+| **지금** | 순수 단위 + `@WebMvcTest` | 로직·계약 JSON 필드명·오류 코드 매핑 |
+| **F03부터** | Testcontainers PostgreSQL | `ck_*` 제약, append-only 트리거, `updatable=false`, `@Immutable`, `@Version` 락, `ddl-auto: validate` 회귀, Flyway 맨바닥 실행 |
+
+지금 방식으로는 **DB에 걸린 규칙을 검증할 수 없다.** 특히 규칙 1의 `updatable=false`는
+Hibernate가 실제 SQL을 만들어야 확인되므로, 현재는 "코드에 그렇게 적어놨다"까지만 검증된다.
+F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 시작할 때 붙인다.
+
+- 테스트는 `test` 프로파일로 돈다. `SeedLoader`는 `@Profile("!test")`라 돌지 않는다
+- `src/test/resources/application-test.yaml`이 가짜 datasource를 박아둔다.
+  실수로 `@SpringBootTest`를 붙였을 때 운영 Supabase에 붙는 사고를 막는 장치다
+- 평가 모듈만 `@Tag("evaluation")`으로 분리해 `./gradlew evaluate`로 돌린다
+
+## Docker
+
+용도가 둘이다. **배포용 `Dockerfile`과 테스트용 Testcontainers는 별개다.**
+
+- `Dockerfile` — Render 빌드 전용. 로컬에서 이걸 직접 실행할 일은 없다
+- Testcontainers — F03부터 통합 테스트에서 PostgreSQL 컨테이너를 띄운다 (아직 미도입)
+
+### 배포용 Dockerfile
 
 `finready-backend/Dockerfile`이 Render 빌드에 쓰인다. 로컬에서는 실행할 일이 없다.
 
@@ -133,6 +173,15 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   `GlobalExceptionHandler` / `RequestIdFilter` / `WebConfig`(CORS).
   응답은 엔티티가 아니라 `DemoProductResponse`로 변환한다 — `document_sha256` 같은
   계약 밖 컬럼이 새지 않게 (2026-08-14)
+- **세션 / Revision / StateMachine** (TRD §5.1~5.3) — `common/StateMachine`에 전이표 전체.
+  `POST /api/sessions`, `POST /api/sessions/{id}/revisions`(F02), `GET /api/sessions/{id}`.
+  상태 변경은 `session.transitionTo(to, stateMachine)` 하나뿐이다 — StateMachine을 인자로
+  받게 해서 전이표를 건너뛸 수 없게 만들었다(규칙 7).
+  `GET`의 `coverage`·`nextAction`·`understanding`은 계약이 null/빈 배열을 허용해
+  지금은 그대로 내보낸다. F03·F04에서 채운다 (2026-08-14)
+- **테스트 3종 도입** — `StateMachineTest`(전이표 49조합 전수),
+  `SessionServiceTest`(revision 채번·중복·검증 순서), `SessionControllerTest`(계약 필드명·오류 스키마).
+  **실행 검증은 경로 이동 후로 미뤄졌다** (아래 "작업할 때" argfile 항목) (2026-08-14)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -160,17 +209,20 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   해당 필터가 실제로 걸러낸 적이 없다
 
 ### 다음 순서
-1. 세션 / Revision / StateMachine (TRD §5.1)
-   → `ConsultationSession`·`RiskWorkflowState`에 상태 전이 메서드를 일부러 두지 않았다.
-   규칙 7대로 StateMachine과 함께 설계할 것
-   → 리포지토리는 `product`·`product_risk`·`customer_profile` 3개만 있다.
-   나머지는 해당 기능 작업에서 만든다
-2. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+1. **Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)**
    → `CoverageResult` 생성자는 ck_provenance_consistency /
    ck_explained_requires_verification 조합을 강제하지 않는다. Verifier에서 팩토리로 막을 것
-3. Understanding / 재설명 / Staff Resolution (F04~F07)
-4. Report + Close + Audit (F08)
-5. 오프라인 평가 모듈 + Rule baseline
+   → **여기서 Testcontainers를 붙인다** (위 "테스트 전략")
+   → 시작 전 LLM 모델·요금제를 정해야 한다 (미결정, TRD D-02)
+2. Understanding / 재설명 / Staff Resolution (F04~F07)
+   → `RiskWorkflowState`에 상태 전이 메서드가 아직 없다. 갱신은 understanding 모듈에서
+   일원화하라는 TRD §4.2대로 그때 설계할 것
+3. Report + Close + Audit (F08)
+   → `ConsultationSession.closedAt`·`closedBy`·`unresolvedReason`을 채우는 경로가 아직 없다
+4. 오프라인 평가 모듈 + Rule baseline
+
+리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·
+`consultation_revision` 5개만 있다. 나머지는 해당 기능 작업에서 만든다.
 
 > **병행(배포 연동)**: F01이 생겨 프론트가 붙을 수 있다. 프론트에 배포 URL 전달 →
 > 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
@@ -191,11 +243,23 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 - LLM 모델·요금제 (심사 5일 quota 산정 필요) — TRD D-02, Step 5 이전 결정
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
+- **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없다 —
+  §6.6은 Understanding 단계의 `nextAction` → 화면만 정한다.
+  현재 매핑(DRAFT→S02 / COVERAGE_ANALYZED·GATE_BLOCKED→S03 / UNDERSTANDING_IN_PROGRESS→S04 /
+  AWAITING_STAFF_REVIEW→S07 / CLOSED_*→S08)은 `SessionService.resumePointOf`에 있고
+  `SessionServiceTest`가 고정해뒀다. 프론트가 API 연결을 시작하기 전에 맞출 것
 - `CoverageResult`·`SessionQuestion`에 `@Immutable`을 붙일지.
   TRD §4.2("정정 시 이전 행을 지우지 않는다")와 §4.6("멱등 발급")을 그대로 읽으면
   행 전체가 append-only다. 다만 규칙 1은 `classifier_status`·`ai_status` 두 컬럼만
   명시하므로 지금은 `updatable = false`까지만 걸어뒀다.
   `ConsultationRevision`·`AuditEvent`는 근거가 명확해 이미 `@Immutable`이다
+
+## 알려진 문제
+
+- **`revisionNo` 채번 경쟁 상태** — `docs/decisions/2026-08-14-revision-no-race-condition.md`.
+  수정 보류(의도적). P0가 단일 사용자 데모라 실질 위험이 낮다는 판단.
+  동시 요청 시 `uq_revision` 위반이 500으로 나간다. 고칠 때는 409
+  `CONCURRENT_SESSION_UPDATE`(recoverable) 매핑이 가장 싸다
 
 ## 처리 대기 (문서 동기화)
 

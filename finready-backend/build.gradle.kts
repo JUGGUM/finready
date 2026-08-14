@@ -39,6 +39,11 @@ dependencies {
 	annotationProcessor("org.projectlombok:lombok")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
+
+	// Boot 4는 테스트 슬라이스도 모듈로 쪼갰다. @WebMvcTest는 starter-test에 없다.
+	// 이걸 빼면 컨트롤러 계약 테스트를 아예 못 쓴다 (모듈화 주의 — CLAUDE.md)
+	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
+
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
