@@ -297,20 +297,26 @@ setter가 없는 것만으로는 부족하다 — 나중에 누가 필드를 어
 |---|---|
 | 엔티티 14개 | `ddl-auto: validate` 통과 (기동 성공) |
 | 시드 로더 | 기동 로그 `시드 적재 완료 — product=PROD_A (A-2026-08-12-01), risk 9건, customerProfile 3건` |
-| F01 | **기동 성공까지만.** 빈 배선·CORS·필터는 확인됐다 |
+| F01 | 응답 본문을 openapi와 대조 완료 (2026-08-14) |
 
-**F01은 응답 본문을 아직 눈으로 확인하지 않았다.** 기동 성공은 배선이 맞다는 뜻이지
-JSON이 계약과 같다는 뜻은 아니다. 남은 확인:
+**F01 대조 결과**
 
-```bash
-curl -i http://localhost:8080/api/products/demo
-#   risks 9건 / understandingCheckRiskIds ["R01","R02","R03"] / customers 3건
-#   X-Request-Id 헤더 존재
+- `product` 7필드가 계약과 일치
+- **계약 밖 컬럼이 안 샌다** — `documentSha256`·`isLiveDemo` 미노출 (2.13이 의도대로 작동)
+- `risks` 9건. GATE_REQUIRED 5(R01·R02·R03·R04·R08) / WARN_ONLY 4(R05·R06·R07·R09)
+  → PRD §5 정책표와 일치
+- `understandingCheckRiskIds` = `["R01","R02","R03"]`
+- `customers` 3건
+- `X-Request-Id` 헤더 존재 (RequestIdFilter 작동), `Vary: Origin` (CORS 활성)
+- PDF: **200 + `Content-Type: application/pdf`** + 167001 bytes
+  → 확장자 없는 `v1.0`이었으면 `application/octet-stream`으로 나가
+  브라우저가 다운로드로 처리했을 것이다. 2.7이 의도대로 작동
 
-curl -I http://localhost:8080/documents/PROD_A/v1.0.pdf     # 200 (파일명 변경이 실제로 먹었는지)
-```
+**아직 안 밟아본 경로**: 시드에 `NOT_APPLICABLE` Risk가 없어서
+`ProductQueryService`의 필터가 실제로 걸러낸 적이 없다. 9건이 그대로 나온 것이지
+필터가 검증된 것은 아니다.
 
-테스트가 0개라 이 확인이 수동이다. 계약 테스트(TRD §17)를 붙이기 전까진 계속 수동이다.
+테스트가 0개라 이 확인이 전부 수동이다. 계약 테스트(TRD §17)를 붙이기 전까진 계속 수동이다.
 
 ## 4.2 미결정
 

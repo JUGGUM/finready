@@ -146,6 +146,19 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 - **스키마 격리**: 마이그레이션·`flyway_schema_history` 모두 `finready` 스키마에 생성.
   `public`의 기존 앱 테이블은 건드리지 않음
 
+### 검증한 것 (2026-08-14)
+- **F01 응답 ↔ openapi v1.4.2 대조**: `product` 7필드 일치,
+  `understandingCheckRiskIds`=`["R01","R02","R03"]`, `customers` 3건,
+  risks 9건의 정책 분포가 PRD §5 정책표와 일치
+- **계약 밖 컬럼 미노출 확인**: 응답에 `documentSha256`·`isLiveDemo`가 없다.
+  엔티티 직렬화였으면 그대로 샜다
+- `X-Request-Id` 헤더 존재(RequestIdFilter 작동), `Vary: Origin`(CORS 활성)
+- **PDF 서빙**: `/documents/PROD_A/v1.0.pdf` 200 + `Content-Type: application/pdf`.
+  확장자 없는 `v1.0`이었으면 `application/octet-stream`으로 나가 브라우저가
+  다운로드로 처리했을 것
+- 미검증 경로: 시드에 `NOT_APPLICABLE` Risk가 없어 `ProductQueryService`의
+  해당 필터가 실제로 걸러낸 적이 없다
+
 ### 다음 순서
 1. 세션 / Revision / StateMachine (TRD §5.1)
    → `ConsultationSession`·`RiskWorkflowState`에 상태 전이 메서드를 일부러 두지 않았다.
