@@ -100,20 +100,32 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
 
 ## 테스트 전략
 
-**하이브리드.** 지금은 DB 없이, F03에서 실제 Postgres를 붙인다.
+**하이브리드.** 순수 단위/`@WebMvcTest`는 기본 `test` 태스크, 실 Postgres가 필요한 검증은
+`integrationTest` 태스크로 분리했다(둘 다 2026-08-14 기준 도입 완료, F03 기능 코드는 아직).
 
 | 단계 | 방식 | 검증 범위 |
 |---|---|---|
-| **지금** | 순수 단위 + `@WebMvcTest` | 로직·계약 JSON 필드명·오류 코드 매핑 |
-| **F03부터** | Testcontainers PostgreSQL | `ck_*` 제약, append-only 트리거, `updatable=false`, `@Immutable`, `@Version` 락, `ddl-auto: validate` 회귀, Flyway 맨바닥 실행 |
+| `./gradlew test` (기본) | 순수 단위 + `@WebMvcTest` | 로직·계약 JSON 필드명·오류 코드 매핑 |
+| `./gradlew integrationTest` (Docker 필요) | Testcontainers PostgreSQL | `ck_*` 제약, append-only 트리거, `updatable=false`, `@Immutable`, `@Version` 락, `ddl-auto: validate` 회귀, Flyway 맨바닥 실행 |
 
-지금 방식으로는 **DB에 걸린 규칙을 검증할 수 없다.** 특히 규칙 1의 `updatable=false`는
-Hibernate가 실제 SQL을 만들어야 확인되므로, 현재는 "코드에 그렇게 적어놨다"까지만 검증된다.
-F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 시작할 때 붙인다.
+지금 순수 단위 방식으로는 **DB에 걸린 규칙을 검증할 수 없다.** 특히 규칙 1의 `updatable=false`는
+Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "코드에 그렇게 적어놨다"까지만
+검증한다. F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 시작하면
+`integrationTest` 쪽에 케이스를 추가한다.
 
-- 테스트는 `test` 프로파일로 돈다. `SeedLoader`는 `@Profile("!test")`라 돌지 않는다
+- `test`·`integrationTest` 둘 다 `test` 프로파일로 돈다. `SeedLoader`는 `@Profile("!test")`라
+  안 돈다
 - `src/test/resources/application-test.yaml`이 가짜 datasource를 박아둔다.
-  실수로 `@SpringBootTest`를 붙였을 때 운영 Supabase에 붙는 사고를 막는 장치다
+  `integrationTest`는 `io.finready.integration.AbstractPostgresIntegrationTest`가
+  `@DynamicPropertySource`로 이 값을 컨테이너 실접속 정보로 덮어쓴다 — 별도 프로파일 파일 없이
+  같은 `test` 프로파일 안에서 통합 테스트만 실 DB를 쓴다. 이 장치 덕분에 실수로
+  `@SpringBootTest`를 붙여도 운영 Supabase에는 붙지 않는다
+- Testcontainers 쪽 datasource URL엔 `currentSchema=finready`가 필요하다.
+  `application.yaml`의 `flyway.schemas: finready` 때문에 테이블이 `public`이 아니라
+  `finready` 스키마에 생기는데, 컨테이너 JDBC URL은 기본이 `public`이라 안 붙이면
+  방금 만든 테이블이 안 보인다
+- 신규 통합 테스트는 `@Tag("integration")` — `AbstractPostgresIntegrationTest`가 클래스에
+  붙여두므로 상속만 하면 자동으로 붙는다. `test` 태스크가 이 태그를 제외한다
 - 평가 모듈만 `@Tag("evaluation")`으로 분리해 `./gradlew evaluate`로 돌린다
 
 ## Docker
@@ -121,7 +133,11 @@ F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 
 용도가 둘이다. **배포용 `Dockerfile`과 테스트용 Testcontainers는 별개다.**
 
 - `Dockerfile` — Render 빌드 전용. 로컬에서 이걸 직접 실행할 일은 없다
-- Testcontainers — F03부터 통합 테스트에서 PostgreSQL 컨테이너를 띄운다 (아직 미도입)
+- Testcontainers — `integrationTest` 태스크가 PostgreSQL 컨테이너를 띄운다. Docker Desktop이
+  떠 있어야 한다. 아티팩트명이 Testcontainers 2.x부터 `testcontainers-junit-jupiter` /
+  `testcontainers-postgresql`로 바뀌었다(단독 `junit-jupiter`/`postgresql` 아님) — Boot
+  4.0.7 BOM이 관리하는 `testcontainers-bom` 버전이 2.0.5라 구버전 아티팩트명 예제를
+  그대로 쓰면 `Could not find` 로 걸린다 (2026-08-14)
 
 ### 배포용 Dockerfile
 
@@ -179,9 +195,16 @@ F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 
   받게 해서 전이표를 건너뛸 수 없게 만들었다(규칙 7).
   `GET`의 `coverage`·`nextAction`·`understanding`은 계약이 null/빈 배열을 허용해
   지금은 그대로 내보낸다. F03·F04에서 채운다 (2026-08-14)
-- **테스트 3종 도입** — `StateMachineTest`(전이표 49조합 전수),
+- **테스트 3종 도입** — `StateMachineTest`(전이표 52+15조합 전수),
   `SessionServiceTest`(revision 채번·중복·검증 순서), `SessionControllerTest`(계약 필드명·오류 스키마).
-  **실행 검증은 경로 이동 후로 미뤄졌다** (아래 "작업할 때" argfile 항목) (2026-08-14)
+  `D:\dev\finready`에서 `gradlew test` 재실행 — 6개 스위트 101건 전수 통과,
+  argfile 인코딩 문제 재발 없음 확인 (2026-08-14)
+- **Testcontainers 스캐폴딩** — `./gradlew integrationTest` 신설 태스크(기본 `test`와 분리,
+  `@Tag("integration")` excludeTags로 격리). `AbstractPostgresIntegrationTest` 베이스 +
+  `SchemaConstraintIntegrationTest` 스모크 2건: ① Flyway V1+V2가 실 Postgres에 적용된
+  스키마로 `ddl-auto: validate` 통과, ② `audit_event` INSERT 성공 / UPDATE는
+  `[23001]`로 트리거가 차단 — 둘 다 지금까지 로컬 기동으로 수기 확인했던 것을
+  CI 회귀로 전환. F03 리포지토리·서비스 코드는 아직 없음, 이건 인프라만 (2026-08-14)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -212,7 +235,8 @@ F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 
 1. **Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)**
    → `CoverageResult` 생성자는 ck_provenance_consistency /
    ck_explained_requires_verification 조합을 강제하지 않는다. Verifier에서 팩토리로 막을 것
-   → **여기서 Testcontainers를 붙인다** (위 "테스트 전략")
+   → Testcontainers 인프라는 이미 있다(`AbstractPostgresIntegrationTest`, 위 "테스트 전략").
+   여기서는 `ck_*`·append-only 등 F03 고유 케이스를 그 위에 추가하면 된다
    → 시작 전 LLM 모델·요금제를 정해야 한다 (미결정, TRD D-02)
 2. Understanding / 재설명 / Staff Resolution (F04~F07)
    → `RiskWorkflowState`에 상태 전이 메서드가 아직 없다. 갱신은 understanding 모듈에서
@@ -263,7 +287,9 @@ F03에서 규칙 3(`ck_explained_requires_verification`)이 실제로 쓰이기 
 
 ## 처리 대기 (문서 동기화)
 
-- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7) → v1.2.4
-- `finready-frontend/contracts/openapi.yml` v1.4.1 → v1.4.2 동기화
-- PRD §12에 `POST /api/sessions/:id/recheck` 추가 (TRD §22-1)
-- PRD §17-3 "Coverage Hold-out" → "Coverage dev set" 정정 (TRD §22-2)
+- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7) → v1.2.4 — PDF 원본,
+  코드로 처리 불가. 다음에 TRD 직접 열 때 반영할 것
+- ~~`finready-frontend/contracts/openapi.yml` v1.4.1 → v1.4.2 동기화~~ — 완료 (2026-08-14).
+  `docs/openapi.yml`을 그대로 덮어썼다. 두 파일 diff 없음 확인
+- PRD §12에 `POST /api/sessions/:id/recheck` 추가 (TRD §22-1) — PDF 원본, 코드로 처리 불가
+- PRD §17-3 "Coverage Hold-out" → "Coverage dev set" 정정 (TRD §22-2) — PDF 원본, 코드로 처리 불가

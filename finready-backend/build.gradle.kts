@@ -44,15 +44,35 @@ dependencies {
 	// 이걸 빼면 컨트롤러 계약 테스트를 아예 못 쓴다 (모듈화 주의 — CLAUDE.md)
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 
+	// F03부터 필요한 실제 Postgres 통합 테스트 (ck_*, append-only 트리거, ddl-auto:validate 회귀).
+	// 버전은 spring-boot-dependencies BOM이 관리한다 — 여기서 직접 안 박는다.
+	testImplementation("org.springframework.boot:spring-boot-testcontainers")
+	// Testcontainers 2.x부터 아티팩트명이 testcontainers-* 로 바뀌었다 (junit-jupiter, postgresql 단독 이름 아님)
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+	testImplementation("org.testcontainers:testcontainers-postgresql")
+
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// 기본 test: 실제 LLM을 호출하는 평가 모듈은 제외한다 (TRD §17)
+// 기본 test: 실제 LLM을 호출하는 평가 모듈 + Docker가 필요한 통합 테스트는 제외한다 (TRD §17)
 tasks.named<Test>("test") {
 	systemProperty("spring.profiles.active", "test")
 	useJUnitPlatform {
-		excludeTags("evaluation")
+		excludeTags("evaluation", "integration")
 	}
+}
+
+// 통합 테스트 실행: ./gradlew integrationTest (Docker Desktop 필요)
+tasks.register<Test>("integrationTest") {
+	description = "Testcontainers PostgreSQL 통합 테스트. 실제 DB 제약·트리거를 검증한다"
+	group = "verification"
+	testClassesDirs = sourceSets["test"].output.classesDirs
+	classpath = sourceSets["test"].runtimeClasspath
+	systemProperty("spring.profiles.active", "test")
+	useJUnitPlatform {
+		includeTags("integration")
+	}
+	shouldRunAfter("test")
 }
 
 // 오프라인 평가 실행: ./gradlew evaluate
