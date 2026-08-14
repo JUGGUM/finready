@@ -1,12 +1,14 @@
 # FinReady 백엔드 작업 노트
 
-2026-08-13 ~ 08-14 작업분. 엔티티 14개 + 시드 로더까지.
+2026-08-13 ~ 08-14 작업분. 엔티티 14개 + 시드 로더 + F01.
 
 무엇을 만들었는지보다 **왜 그렇게 했는지**를 남기는 문서다.
 코드만 봐서는 안 보이는 판단 근거가 여기 있다.
 
-관련 커밋: `6be0b65` (엔티티), `2b5fc1a` (문서)
-시드 로더는 아직 커밋 전이다.
+관련 커밋: `6be0b65` (엔티티), `2b5fc1a` (문서). 시드 로더·F01은 커밋 전이다.
+
+> **TRD §18 Step 1 DoD 충족 지점이다.** `연결 + Flyway + 시드 로더 + GET /products/demo`
+> + §3.4 검증 5항목이 모두 끝났다.
 
 ---
 
@@ -67,6 +69,20 @@ enum으로 올리면 코드만 값을 막고 DB는 아무 문자열이나 받아
 - `static/documents/PROD_A/v1.0` → **`v1.0.pdf`로 이름 변경**
 
 패키지 배치는 TRD §2.1 그대로다. `SeedLoader`·`SeedValidator`가 `product/`에 있는 것도 TRD 명시다.
+
+## 1.4 F01 + 오류 규약 9개
+
+| 파일 | 역할 |
+|---|---|
+| `common/ErrorCode` | 계약 18값. HTTP 상태와 `recoverable`을 코드마다 보유 |
+| `common/ErrorResponse` | openapi Error 스키마 `{code, message, riskId, recoverable, requestId}` |
+| `common/ApiException` | 계약 오류를 던질 때 쓴다. message는 화면에 그대로 노출된다 |
+| `common/GlobalExceptionHandler` | 모든 오류를 Error 스키마 하나로 모은다. 스택트레이스 미노출 |
+| `common/RequestIdFilter` | 요청마다 id 생성 → MDC + `X-Request-Id` 헤더 |
+| `common/WebConfig` | CORS. `finready.cors.allowed-origins`를 실제로 읽는다 |
+| `product/DemoProductResponse` | 응답 DTO. 엔티티를 그대로 내보내지 않는다 |
+| `product/ProductQueryService` | 읽기 3건을 한 readOnly 트랜잭션으로 묶는다 |
+| `product/ProductController` | `GET /api/products/demo` |
 
 ---
 
@@ -166,7 +182,30 @@ TRD §4.5는 4항목만 요구한다. 여기에 2개를 더 넣었다.
 하나 발견하고 바로 던지지 않고 전부 수집해 한 번에 보고한다.
 시드를 고칠 때 "고치고 재기동"을 줄이려는 목적이다.
 
-## 2.11 시드 DTO에서 enum을 String으로 받음
+## 2.11 `context-path`를 `/api`로 잡지 않음
+
+**선택지**
+- (A) `server.servlet.context-path: /api` — 한 줄이면 끝난다
+- (B) 컨트롤러마다 `@RequestMapping("/api/...")` — 선택함
+
+**이유**: (A)는 actuator까지 `/api/actuator/health`로 옮긴다.
+**이미 배포된 Render 헬스체크가 깨진다.** 계약의 base path와 actuator 경로는 별개다.
+
+## 2.12 `recoverable`과 HTTP 상태를 `ErrorCode`에 넣음
+
+계약이 둘 다 **코드 단위**로 규정한다("`AI_TIMEOUT`, `AI_PARSING_FAILED`,
+`CONCURRENT_SESSION_UPDATE`가 recoverable"). 던지는 쪽마다 정하게 두면
+같은 코드가 엔드포인트별로 다른 상태·다른 recoverable로 나간다.
+
+**계약이 쓰는 상태코드는 200/201/400/404/409/503뿐이다.**
+LLM 실패는 502/504가 아니라 **503**이다. 추측했으면 틀렸을 지점이라 `openapi.yml`에서 직접 셌다.
+
+## 2.13 응답에 엔티티를 그대로 쓰지 않음
+
+`DemoProductResponse`로 변환한다. `product` 테이블에는 `document_sha256`,
+`is_live_demo`처럼 계약에 없는 컬럼이 있다. 엔티티를 그대로 직렬화하면 **응답에 샌다.**
+
+## 2.14 시드 DTO에서 enum을 String으로 받음
 
 `coveragePolicy`를 enum으로 받으면 잘못된 값이 **Jackson 파싱 단계**에서 터져
 "어느 Risk의 어느 필드"인지 못 알려준다. String으로 받고 `SeedValidator`가 판정한다.
@@ -252,18 +291,26 @@ setter가 없는 것만으로는 부족하다 — 나중에 누가 필드를 어
 
 # 4. 안 끝난 / 불확실한 부분
 
-## 4.1 시드 로더 기동 검증 — **아직 안 됨**
+## 4.1 검증 수준
 
-컴파일만 통과했다. 실제로 기동해서 아래를 확인해야 한다.
+| 항목 | 확인된 것 |
+|---|---|
+| 엔티티 14개 | `ddl-auto: validate` 통과 (기동 성공) |
+| 시드 로더 | 기동 로그 `시드 적재 완료 — product=PROD_A (A-2026-08-12-01), risk 9건, customerProfile 3건` |
+| F01 | **기동 성공까지만.** 빈 배선·CORS·필터는 확인됐다 |
 
-```
-시드 적재 완료 — product=PROD_A (A-2026-08-12-01), risk 9건, customerProfile 3건
+**F01은 응답 본문을 아직 눈으로 확인하지 않았다.** 기동 성공은 배선이 맞다는 뜻이지
+JSON이 계약과 같다는 뜻은 아니다. 남은 확인:
+
+```bash
+curl -i http://localhost:8080/api/products/demo
+#   risks 9건 / understandingCheckRiskIds ["R01","R02","R03"] / customers 3건
+#   X-Request-Id 헤더 존재
+
+curl -I http://localhost:8080/documents/PROD_A/v1.0.pdf     # 200 (파일명 변경이 실제로 먹었는지)
 ```
 
-```sql
-select count(*) from finready.product_risk;        -- 9
-select count(*) from finready.customer_profile;    -- 3
-```
+테스트가 0개라 이 확인이 수동이다. 계약 테스트(TRD §17)를 붙이기 전까진 계속 수동이다.
 
 ## 4.2 미결정
 
@@ -287,6 +334,11 @@ select count(*) from finready.customer_profile;    -- 3
   Boot 버전마다 다르다. 테스트가 아직 0개라 검증 못 했다. 첫 테스트 작성 시 확인할 것
 - **고객 시드 이중 관리** — `seed/customer_profiles.json`과 `eval/demo_seed.json`에
   같은 3건이 있다. 한쪽만 고치면 갈라진다. 평가 모듈 작업 때 한쪽을 참조하게 정리할 것
+- **`CORS_ALLOWED_ORIGINS`에 프론트 배포 도메인 미설정** — 기본값이
+  `http://localhost:3000`이다. 프론트가 배포되면 Render 환경변수에 도메인을 넣어야 한다.
+  안 넣으면 배포 프론트에서 F01 호출이 브라우저에 막힌다
+- **springdoc 주석 없음** — `/v3/api-docs`가 뜨긴 하지만 `@Operation` 주석이 없어
+  `openapi.yml`과 자동 대조가 안 된다. TRD §17 계약 테스트를 붙일 때 필요하다
 
 ## 4.5 문서 빚 (CLAUDE.md "처리 대기")
 

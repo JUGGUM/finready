@@ -123,6 +123,16 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   (`product`·`session`·`coverage`·`understanding`·`explanation`·`audit`·`ai`·`common`).
   `local` 기동으로 `ddl-auto: validate` 통과 확인 = V1 DDL과 컬럼·타입·nullable 일치.
   `customer_profile`은 TRD §2.1 목록에 없어 시드라는 성격을 따라 `product/`에 뒀다 (2026-08-13)
+- **시드 로더 + 검증기** (TRD §4.5) — `CommandLineRunner`가 검증 후 upsert.
+  기동 로그 `시드 적재 완료 — product=PROD_A (A-2026-08-12-01), risk 9건, customerProfile 3건`.
+  고객 preset은 `seed/customer_profiles.json` 별도 파일로 뒀다(`$schema`가 다르므로).
+  `static/documents/PROD_A/v1.0` → **`v1.0.pdf`로 이름 변경** — `documentUrl`이
+  `/documents/PROD_A/v1.0.pdf`라 그대로 두면 프론트의 PDF 요청이 404다 (2026-08-14)
+- **F01 `GET /api/products/demo` + `common/` 오류 규약** — `ErrorCode`(계약 18값,
+  HTTP 상태·`recoverable`을 코드마다 보유) / `ErrorResponse` / `ApiException` /
+  `GlobalExceptionHandler` / `RequestIdFilter` / `WebConfig`(CORS).
+  응답은 엔티티가 아니라 `DemoProductResponse`로 변환한다 — `document_sha256` 같은
+  계약 밖 컬럼이 새지 않게 (2026-08-14)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -137,28 +147,26 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   `public`의 기존 앱 테이블은 건드리지 않음
 
 ### 다음 순서
-1. **리포지토리 + 시드 로더 + 검증기** — TRD §4.5. 검증 실패 시 기동 중단
-   → 엔티티는 있으나 리포지토리가 없어 아직 읽기·쓰기 경로가 없다
-   → `customerProfile`이 현재 `demo_seed.json`(테스트 리소스)에만 있다.
-   프로덕션 시드로도 필요하므로 배치 방식을 먼저 결정할 것
-2. `GET /api/products/demo` (F01)
-3. 세션 / Revision / StateMachine (TRD §5.1)
+1. 세션 / Revision / StateMachine (TRD §5.1)
    → `ConsultationSession`·`RiskWorkflowState`에 상태 전이 메서드를 일부러 두지 않았다.
    규칙 7대로 StateMachine과 함께 설계할 것
-4. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
+   → 리포지토리는 `product`·`product_risk`·`customer_profile` 3개만 있다.
+   나머지는 해당 기능 작업에서 만든다
+2. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
    → `CoverageResult` 생성자는 ck_provenance_consistency /
    ck_explained_requires_verification 조합을 강제하지 않는다. Verifier에서 팩토리로 막을 것
-5. Understanding / 재설명 / Staff Resolution (F04~F07)
-6. Report + Close + Audit (F08)
-7. 오프라인 평가 모듈 + Rule baseline
+3. Understanding / 재설명 / Staff Resolution (F04~F07)
+4. Report + Close + Audit (F08)
+5. 오프라인 평가 모듈 + Rule baseline
 
-> **병행(배포 연동)**: 프론트에 배포 URL 전달 →
+> **병행(배포 연동)**: F01이 생겨 프론트가 붙을 수 있다. 프론트에 배포 URL 전달 →
 > 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
 > 백엔드 `CORS_ALLOWED_ORIGINS`에 프론트 배포 도메인 추가.
-> 현재 기본값이 `http://localhost:3000`이라 그대로 두면 배포 프론트에서 CORS가 막힌다.
+> CORS는 이제 `common/WebConfig`가 이 설정을 실제로 읽는다. 기본값이
+> `http://localhost:3000`이라 배포 도메인을 안 넣으면 배포 프론트에서 막힌다.
 
-> TRD §18 Step 1 DoD는 `연결 + Flyway + 시드 로더 + GET /products/demo` +
-> §3.4 검증 5항목까지다. 연결·Flyway·검증은 끝났고, 시드 로더와 F01이 위 1~2번에 남아 있다.
+> **TRD §18 Step 1 DoD 충족.** `연결 + Flyway + 시드 로더 + GET /products/demo` +
+> §3.4 검증 5항목이 모두 끝났다. 다음 순서 1번부터는 Step 2다.
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
 - 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
