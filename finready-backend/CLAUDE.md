@@ -282,11 +282,20 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 1. **F03 마무리 — LLM 구현체 2개뿐**
    → 파이프라인은 **완료**됐다. `CoverageClassifier`·`SemanticVerifier` 구현체를
    `@Component`로 추가하면 `AiPortConfig`의 스텁이 자동으로 물러난다. 그 외에 고칠 코드는 없다
-   → **LLM 모델·요금제 결정이 선행** (미결정, TRD D-02).
-   잠정 후보는 Claude Sonnet 5 — structured outputs(`output_config.format` + `json_schema`의
-   `enum`)로 "enum 밖 값 = 파싱 실패"(규칙 9)를 API 계층에서 강제할 수 있다.
-   **`application.yaml`의 `finready.ai.temperature`는 그때 제거할 것** — Sonnet 5는
-   비기본값 sampling 파라미터를 400으로 거부한다
+   → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
+   `com.anthropic:anthropic-java`, 설정은 `ai/AiProperties`(`finready.ai.*`)
+   → **Sonnet 4.6은 structured outputs를 지원하지 않는다** (지원: Fable 5 / Opus 5 /
+   Opus 4.8 / Sonnet 5 / Haiku 4.5). `output_config.format`으로 enum을 API 계층에서
+   강제할 수 없으므로 **프롬프트로 JSON을 유도하고 직접 파싱 + 방어적 검증**해야 한다.
+   규칙 9의 보장이 API가 아니라 우리 코드에 있다 — `indexExactly`·`validate`가 이미
+   `AI_PARSING_FAILED`를 던지므로 구조는 그대로 쓴다
+   → `temperature: 0`은 4.6에서 유효하다. **Opus 4.7+ / Sonnet 5로 올리면 400이므로
+   그때 지울 것**
+   → **$5 크레딧이다.** 세션당 LLM 호출이 6~9회(분류1+Verifier1+질문1+판정3~6)라
+   대략 십몇~스무 세션 규모다. 개발 중 반복 실행 + 심사 5일치가 여기 다 들어간다.
+   **prompt caching을 처음부터 넣을 것** — Risk 9건의 `fact`와 시스템 프롬프트가 전 세션
+   공통이라 캐시 prefix로 맞고, 캐시 읽기는 ~0.1배다. 나중에 붙이면 프롬프트를 다시 짜야 한다.
+   `effort`도 레버다(4.6 기본 `high`, 분류는 `medium`/`low`로 충분할 가능성)
    → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 지금은 계약대로
    "GATE_REQUIRED + CONTRADICTED 후보 + provenance 통과"만 돌린다
    (`CoverageAnalysisService.selectVerifierTargets`, 이 메서드 하나만 고치면 된다).
@@ -328,7 +337,8 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 
 ## 미결정
 
-- LLM 모델·요금제 (심사 5일 quota 산정 필요) — TRD D-02, Step 5 이전 결정
+- ~~LLM 모델·요금제~~ — **`claude-sonnet-4-6` 결정** (2026-08-18). $5 크레딧이라 quota가
+  빠듯하다 — prompt caching과 effort 조절이 필수다
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
 - **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없다 —

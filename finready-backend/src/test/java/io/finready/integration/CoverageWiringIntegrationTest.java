@@ -1,12 +1,15 @@
 package io.finready.integration;
 
+import io.finready.ai.AiProperties;
 import io.finready.coverage.CoverageAnalysisService;
 import io.finready.coverage.CoverageClassifier;
 import io.finready.coverage.CoverageController;
 import io.finready.coverage.SemanticVerifier;
+import io.finready.understanding.UnderstandingController;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.List;
 
@@ -20,7 +23,13 @@ import static org.assertj.core.api.Assertions.catchThrowable;
  * <p>동시에, 스텁이 <b>조용히 넘어가지 않는지</b>도 본다. 빈 결과를 돌려주면 모든 Risk 가
  * "설명 안 됨"으로 읽혀 Gate 가 잠기고, 원인이 코드가 아니라 설정이라는 걸 알기 어렵다.
  */
-@DisplayName("F03 배선 (Testcontainers)")
+@DisplayName("F03/F04 배선 (Testcontainers)")
+@TestPropertySource(properties = {
+		// 키를 비워 둔 채로 기동하는지 본다. application.yaml 의 기본값이 필수로 바뀌면
+		// 여기서 컨텍스트 기동 자체가 실패한다
+		"finready.ai.api-key=",
+		"finready.ai.model=claude-sonnet-4-6"
+})
 class CoverageWiringIntegrationTest extends AbstractPostgresIntegrationTest {
 
 	@Autowired
@@ -30,18 +39,33 @@ class CoverageWiringIntegrationTest extends AbstractPostgresIntegrationTest {
 	private CoverageAnalysisService coverageAnalysisService;
 
 	@Autowired
+	private UnderstandingController understandingController;
+
+	@Autowired
 	private CoverageClassifier classifier;
 
 	@Autowired
 	private SemanticVerifier semanticVerifier;
 
+	@Autowired
+	private AiProperties aiProperties;
+
 	@Test
-	@DisplayName("LLM 미설정 상태로도 컨텍스트가 기동하고 F03 빈이 모두 배선된다")
+	@DisplayName("LLM 미설정 상태로도 컨텍스트가 기동하고 빈이 모두 배선된다")
 	void contextStartsWithoutLlmConfigured() {
 		assertThat(coverageController).isNotNull();
 		assertThat(coverageAnalysisService).isNotNull();
+		assertThat(understandingController).isNotNull();
 		assertThat(classifier).isNotNull();
 		assertThat(semanticVerifier).isNotNull();
+	}
+
+	@Test
+	@DisplayName("키가 비어도 바인딩은 성공하고 미설정으로 판정된다")
+	void propertiesBindWithoutKey() {
+		assertThat(aiProperties.isConfigured()).isFalse();
+		assertThat(aiProperties.model()).isEqualTo("claude-sonnet-4-6");
+		assertThat(aiProperties.toString()).doesNotContain("api-key=");
 	}
 
 	@Test

@@ -83,11 +83,16 @@ finready:
   understanding:
     max-attempts: 2
   ai:
-    api-key: ${LLM_API_KEY}             # 응답·로그 어디에도 노출 금지
-    model: ${LLM_MODEL}
-    base-url: ${LLM_BASE_URL}
+    # 기본값을 비워 두는 것은 의도적이다. 필수로 두면 키 없이 앱이 기동조차 못 해
+    # LLM이 필요 없는 화면(F01·F02·리포트)까지 막힌다. 키가 없으면 AiPortConfig가
+    # 실패하는 스텁을 등록하므로, 호출 시점에 명확히 터진다.
+    api-key: ${LLM_API_KEY:}            # 응답·로그 어디에도 노출 금지
+    model: ${LLM_MODEL:claude-sonnet-4-6}
+    base-url: ${LLM_BASE_URL:https://api.anthropic.com}
     timeout-seconds: 30
     max-retries: 1                      # 1회만. 무한 재시도 금지 (TRD §7.1)
+    # Sonnet 4.6은 sampling 파라미터를 받는다. Opus 4.7+ / Sonnet 5로 올리면
+    # 비기본값이 400이므로 이 줄을 함께 지워야 한다
     temperature: 0
 
 logging:

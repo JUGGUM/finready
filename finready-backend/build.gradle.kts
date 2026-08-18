@@ -32,6 +32,10 @@ dependencies {
 	// Boot 4는 springdoc 3.x 라인이다. 2.x는 Boot 3 전용이므로 쓰면 안 된다.
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
 
+	// LLM 클라이언트 — Claude Sonnet 4.6 (TRD D-02 결정, 2026-08-18).
+	// 공식 SDK를 쓴다. 직접 HTTP를 짜면 재시도·스트리밍·오류 타입을 다시 만들어야 한다.
+	implementation("com.anthropic:anthropic-java:2.34.0")
+
 	// 시드 sourceText ↔ PDF 대조. 런타임이 아니라 테스트에서만 쓴다 (TRD §5.4)
 	testImplementation("org.apache.pdfbox:pdfbox:3.0.3")
 
