@@ -31,20 +31,37 @@ import { useScenario } from "@/shared/ui/staff-shell";
  * never inspects `aiStatus` and `attempt` to decide where to go next, which
  * is how a second, divergent copy of the branch rules would get built.
  *
- * CONTRACT BLOCKER — mid-step reload.
- * `SessionSnapshotResponse` carries attempts and `workflowStatus`, so a
- * reload can tell which risk is open and whether it has escalated. It does
- * not carry the last result or the re-explanation, so S05 and S06 cannot be
- * restored exactly; a reload lands on the question for that risk instead.
- * Reconstructing either locally would mean inventing content the server
- * never sent, so we don't. Revisit once the contract exposes them.
+ * Reload behaviour (contract v1.4.2).
+ * `pendingQuestion` restores the open question — including its attempt — so a
+ * reload resumes on the right question and posts to the right endpoint. The
+ * transient S05 result and S06 re-explanation are not part of the snapshot, so
+ * a reload lands on the question for that risk rather than back on those
+ * screens; re-issuing `/reexplain` would be a second grounded generation the
+ * customer never asked for, and inventing the content locally is worse.
  */
 
+/**
+ * The question view carries no attempt of its own: which attempt is open, and
+ * the exact wording, come from the session's `pendingQuestion`. That is what
+ * makes a mid-step reload land on attempt 2 instead of restarting at attempt 1
+ * and posting to the wrong endpoint.
+ */
 type View =
-  | { kind: "question"; mode: "INITIAL" | "RECHECK" }
+  | { kind: "question" }
   | { kind: "result"; result: UnderstandingResponse }
   | { kind: "reexplain"; data: ReExplanationResponse; misunderstanding?: string }
   | { kind: "done" };
+
+/**
+ * The result screen describes the answer that was just graded, so it is
+ * labelled with the progress the server returned alongside that answer —
+ * not with whichever risk the client has since moved on to.
+ */
+function resultKicker(result: UnderstandingResponse, total: number): string {
+  const index = result.progress?.currentRiskIndex;
+  const of = result.progress?.totalRiskCount ?? total;
+  return index ? `핵심 위험 ${index} / ${of}` : `핵심 위험 ${of} 중`;
+}
 
 export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -64,7 +81,7 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
    */
   const [activeRiskId, setActiveRiskId] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
-  const [view, setView] = useState<View>({ kind: "question", mode: "INITIAL" });
+  const [view, setView] = useState<View>({ kind: "question" });
 
   const allQuestions = questions.data?.questions ?? [];
   // Settled, or waiting on a staff decision — either way the customer has
@@ -119,19 +136,31 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
   const pending =
     submitAnswer.isPending || submitRecheck.isPending || reexplain.isPending;
 
+  // The server re-serves whatever question it already issued, so this survives
+  // a reload and is the only source of the attempt-2 wording. The client never
+  // composes a question of its own.
+  const riskState = (session.data.understanding ?? []).find(
+    (u) => u.riskId === riskId,
+  );
+  const pendingQuestion = riskState?.pendingQuestion ?? null;
+  const attempt = pendingQuestion?.attempt ?? 1;
+  const isRecheck = attempt >= 2;
+  const questionText = pendingQuestion?.question ?? current.question ?? "";
+
   /** Advance to whatever the server said comes next. */
   const follow = (nextAction: NextAction, result?: UnderstandingResponse) => {
     switch (nextAction) {
-      case "NEXT_RISK": {
-        const next = openQuestions.find((q) => q.riskId !== current.riskId);
-        setActiveRiskId((next?.riskId as string) ?? null);
+      case "NEXT_RISK":
+        // Clearing the pin, rather than picking a successor here, is the whole
+        // point: `current` is already derived from the server's open list, so
+        // choosing "the one after current" advanced twice and skipped a risk.
+        setActiveRiskId(null);
         setAnswer("");
-        setView({ kind: "question", mode: "INITIAL" });
+        setView({ kind: "question" });
         return;
-      }
       case "RECHECK":
         setAnswer("");
-        setView({ kind: "question", mode: "RECHECK" });
+        setView({ kind: "question" });
         return;
       case "REEXPLAIN":
         reexplain.mutate(
@@ -161,7 +190,10 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
       answer: answer.trim(),
       answerSource: "CUSTOMER_DIRECT_DEMO" as const,
     };
-    const mutation = view.mode === "INITIAL" ? submitAnswer : submitRecheck;
+    // attempt 1 goes to /understanding, attempt 2 to /recheck. Choosing by the
+    // server's attempt (rather than by how this screen was reached) is what
+    // keeps a reload from posting attempt 2 to the attempt-1 endpoint.
+    const mutation = isRecheck ? submitRecheck : submitAnswer;
     mutation.mutate(req, {
       onSuccess: (result) => setView({ kind: "result", result }),
     });
@@ -182,21 +214,17 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
 
       {view.kind === "question" ? (
         <AnswerForm
-          question={
-            view.mode === "INITIAL"
-              ? (current.question ?? "")
-              : (reexplain.data?.recheckQuestion ?? current.question ?? "")
-          }
+          question={questionText}
           kicker={kicker}
           note={
-            view.mode === "INITIAL"
-              ? "답변은 상담 기록과 함께 보관됩니다."
-              : "두 번째 확인입니다. 이번에도 판단이 어려우면 담당 직원이 함께 확인합니다."
+            isRecheck
+              ? "두 번째 확인입니다. 이번에도 판단이 어려우면 담당 직원이 함께 확인합니다."
+              : "답변은 상담 기록과 함께 보관됩니다."
           }
           answer={answer}
           onAnswerChange={setAnswer}
           samples={samples}
-          bucket={view.mode === "INITIAL" ? "initial" : "recheck"}
+          bucket={isRecheck ? "recheck" : "initial"}
           pending={pending}
           onSubmit={submit}
         />
@@ -207,7 +235,7 @@ export function UnderstandingScreen({ sessionId }: { sessionId: string }) {
           aiStatus={view.result.aiStatus}
           reason={view.result.reason}
           answer={view.result.answer ?? answer}
-          kicker={kicker}
+          kicker={resultKicker(view.result, total)}
           nextAction={view.result.nextAction}
           pending={pending}
           onContinue={() => follow(view.result.nextAction, view.result)}

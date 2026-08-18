@@ -1,4 +1,4 @@
-import type { ResumePoint } from "@/shared/types/domain";
+import type { NextAction, ResumePoint } from "@/shared/types/domain";
 
 /**
  * Where each `resumePoint` lives in this app's routes.
@@ -41,9 +41,46 @@ export function resumeHref(
   return `/session/${sessionId}/${RESUME_ROUTE[resumePoint]}${query}`;
 }
 
+/**
+ * Where each server-issued `nextAction` sends the browser.
+ *
+ * `NEXT_RISK` and `RECHECK` both stay on the customer route — which risk and
+ * which attempt is decided by the session state the server returns, not here.
+ */
+const NEXT_ACTION_ROUTE: Record<NextAction, string> = {
+  NEXT_RISK: "understanding",
+  RECHECK: "understanding",
+  REEXPLAIN: "understanding",
+  STAFF_RESOLUTION_REQUIRED: "review",
+  GO_TO_REPORT: "report",
+};
+
+export function nextActionHref(
+  sessionId: string,
+  nextAction: NextAction,
+  query = "",
+): string {
+  return `/session/${sessionId}/${NEXT_ACTION_ROUTE[nextAction]}${query}`;
+}
+
 export type ResumeDecision =
   | { kind: "navigate"; href: string }
   | { kind: "unknown" };
+
+/**
+ * Where to go after an action that *does* report a `nextAction`.
+ *
+ * Kept alongside `decideResume` so both paths fail the same way: if the
+ * server did not say, the client does not invent an answer.
+ */
+export function decideNextAction(
+  sessionId: string,
+  nextAction: NextAction | undefined | null,
+  query = "",
+): ResumeDecision {
+  if (!nextAction) return { kind: "unknown" };
+  return { kind: "navigate", href: nextActionHref(sessionId, nextAction, query) };
+}
 
 /**
  * Where to go after an action whose response carries no `nextAction`.

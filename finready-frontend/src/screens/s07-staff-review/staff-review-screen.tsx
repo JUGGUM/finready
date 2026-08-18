@@ -7,7 +7,7 @@ import {
   INPUT_LIMITS,
   UNDERSTANDING_AI_STATUS_LABEL,
 } from "@/shared/constants/labels";
-import { decideResume } from "@/shared/lib/resume";
+import { decideNextAction } from "@/shared/lib/resume";
 import type { StaffDisposition } from "@/shared/types/domain";
 import { ErrorNote } from "@/shared/ui/error-note";
 import { ScreenSkeleton } from "@/shared/ui/screen-skeleton";
@@ -86,17 +86,12 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
         actor: "staff-demo",
       },
       {
-        // `/staff-resolution` returns the risk's state, with no `nextAction`
-        // (unlike `/understanding` and `/recheck`) — filed as a contract
-        // issue. Until that lands, this follows the server's `resumePoint`.
-        //
-        // If the server tells us nothing, we stop and say so rather than
-        // guessing a destination: picking one here would mean re-deriving
-        // the branch rule the server owns, and guessing wrong could skip a
-        // risk that still needs the customer.
-        onSuccess: async () => {
-          const fresh = await session.refetch();
-          const decision = decideResume(sessionId, fresh.data?.resumePoint, query);
+        // The response says where to go (contract v1.4.2), so there is no
+        // refetch-and-guess step: the client neither counts remaining risks
+        // nor re-derives the branch rule. If the server somehow says nothing,
+        // it stops and reports rather than picking a plausible destination.
+        onSuccess: (result) => {
+          const decision = decideNextAction(sessionId, result.nextAction, query);
           if (decision.kind === "unknown") {
             setRouteUnknown(true);
             return;
@@ -217,9 +212,9 @@ export function StaffReviewScreen({ sessionId }: { sessionId: string }) {
                   onClick={() => {
                     setRouteUnknown(false);
                     void session.refetch().then((fresh) => {
-                      const decision = decideResume(
+                      const decision = decideNextAction(
                         sessionId,
-                        fresh.data?.resumePoint,
+                        fresh.data?.nextAction,
                         query,
                       );
                       if (decision.kind === "navigate") router.push(decision.href);

@@ -71,6 +71,26 @@ function useCoverageWriter(sessionId: string) {
   };
 }
 
+/**
+ * The coverage result for the session, as last returned by the server.
+ *
+ * `GET /sessions/{id}` may or may not carry `coverage` (the contract types it
+ * as nullable), so S03 reads this cache — written by whichever coverage call
+ * last ran — and treats the snapshot as the fallback. Nothing is recomputed
+ * either way; both are server responses.
+ */
+export function useCachedCoverage(sessionId: string) {
+  return useQuery({
+    queryKey: queryKeys.coverage(sessionId),
+    // Populated by the coverage/override mutations. There is no fetcher: a
+    // silent re-analysis on mount would hide whether the server actually
+    // restored this state.
+    queryFn: () => null,
+    enabled: false,
+    staleTime: Infinity,
+  });
+}
+
 export function useAnalyzeCoverage(sessionId: string) {
   const write = useCoverageWriter(sessionId);
   return useMutation({

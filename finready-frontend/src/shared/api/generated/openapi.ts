@@ -235,6 +235,9 @@ export interface paths {
          *     **응답에 후속 질문(F07용)을 함께 포함**한다. 왕복을 줄이고 "동일 질문 반복 금지"
          *     규칙을 서버가 한 번에 보장하기 위함이다.
          *
+         *     이 질문은 attempt 2로 영속화되므로, 새로고침 후 `GET /sessions/{id}`의
+         *     `pendingQuestion`에서 동일 문구가 복구된다. 재호출해도 문구가 바뀌지 않는다.
+         *
          *     재설명은 `aiStatus=MISUNDERSTOOD`인 Risk에만 적용된다. UNCERTAIN은 PRD §7.5에 따라
          *     재설명 없이 바로 후속 확인(`/recheck`)으로 간다.
          */
@@ -291,6 +294,10 @@ export interface paths {
          *
          *     처리 후 `workflowStatus`는 `COMPLETE`가 되고 `finalDisposition`에
          *     `RESOLVED_BY_STAFF` 또는 `UNRESOLVED`가 기록된다.
+         *
+         *     응답의 `nextAction`이 다음 Risk로 갈지 Report로 갈지를 결정한다.
+         *     `UNRESOLVED`로 처리해도 다음 Risk로 진행할 수 있으며(PRD §7.5),
+         *     미해결 여부는 최종 Close 상태에서 구분된다.
          */
         post: operations["resolveByStaff"];
         delete?: never;
@@ -333,8 +340,17 @@ export interface paths {
         put?: never;
         /**
          * F08 - 직원 세션 종료
-         * @description AI 단독으로 세션을 종료할 수 없다. 이 엔드포인트만이 세션을 종료하며
-         *     `actorRole=AI`인 요청은 거부된다.
+         * @description **직원 전용 애플리케이션 액션이다.** 세션을 종료하는 유일한 경로이며,
+         *     다른 어떤 엔드포인트도 세션을 `SESSION_CLOSED_*`로 전이시키지 않는다.
+         *
+         *     request에 `actorRole`을 두지 않는다. P0에는 인증이 없어 클라이언트가
+         *     신고한 역할은 검증할 수 없고, 검증 불가능한 검사는 통제가 있다는
+         *     인상만 만든다. 서버가 감사 이벤트에 `actorRole=STAFF`를 고정 기록한다.
+         *
+         *     AI가 세션을 종료할 수 없다는 보장은 요청 거부가 아니라 **경로 부재**에서 나온다.
+         *     AI Gateway에는 자사 API를 호출하는 클라이언트가 없고, LLM 출력은 enum으로
+         *     파싱되어 판정값으로만 소비되며 어떤 필드도 엔드포인트 호출로 이어지지 않는다.
+         *     (TRD §13.1)
          *
          *     미해결 항목이 있으면 `SESSION_CLOSED_WITH_UNRESOLVED`가 되며 사유가 필수다.
          *     WARN_ONLY의 미확인 항목이 남아 있으면 `acknowledgedWarnings`에 해당 riskId를
@@ -520,6 +536,11 @@ export interface components {
         };
         SessionSnapshotResponse: components["schemas"]["SessionResponse"] & {
             resumePoint?: components["schemas"]["ResumePoint"];
+            /**
+             * @description Understanding 단계 진행 중이면 현재 시점의 분기값.
+             *     Coverage 단계이거나 세션 종료 후에는 null이며, 이때는 resumePoint를 쓴다.
+             */
+            nextAction?: components["schemas"]["NextAction"] | null;
             currentRevision?: components["schemas"]["RevisionResponse"];
             coverage?: components["schemas"]["CoverageResponse"] | null;
             understanding?: components["schemas"]["RiskUnderstandingState"][];
@@ -623,6 +644,11 @@ export interface components {
             question: string;
             source: components["schemas"]["GenerationSource"];
             /**
+             * @description 이 엔드포인트가 반환하는 질문은 항상 attempt 1이다.
+             * @example 1
+             */
+            attempt?: number;
+            /**
              * @description 1부터 시작. UI progress "Risk {orderIndex}/{totalRiskCount}".
              * @example 1
              */
@@ -647,6 +673,19 @@ export interface components {
             /** @description workflowStatus가 COMPLETE일 때만 값이 존재한다. */
             finalDisposition?: components["schemas"]["UnderstandingFinalDisposition"] | null;
             nextAction: components["schemas"]["NextAction"];
+            /**
+             * @description **`nextAction=RECHECK`일 때 필수, 그 외에는 null.**
+             *
+             *     UNCERTAIN(attempt 1)은 재설명을 거치지 않고 바로 후속 확인으로 가므로
+             *     (PRD §7.5), 이 응답이 후속 질문을 제공하는 유일한 지점이다.
+             *     서버가 `fallbackRecheckQuestion`을 원천으로 발급하고 attempt 2로 영속화한다.
+             *
+             *     최초 질문과 정규화 기준으로 동일하면 서버가 대체한다. FE는 어떤 경우에도
+             *     질문 문구를 자체 생성하지 않으며, 새로고침 후에는
+             *     `GET /sessions/{id}`의 `pendingQuestion`으로 동일 문구를 복구한다.
+             */
+            recheckQuestion?: string | null;
+            recheckQuestionSource?: components["schemas"]["GenerationSource"] | null;
             progress?: {
                 /** @example 1 */
                 currentRiskIndex?: number;
@@ -704,6 +743,42 @@ export interface components {
             } | null;
             workflowStatus?: components["schemas"]["UnderstandingWorkflowStatus"];
             finalDisposition?: components["schemas"]["UnderstandingFinalDisposition"] | null;
+            /**
+             * @description 발급됐으나 아직 답변되지 않은 질문. 새로고침 복구의 근거다.
+             *     답변이 저장되면 null이 된다.
+             *
+             *     서버는 (session, risk, attempt)당 질문을 하나만 발급하며 재요청에도
+             *     같은 문구를 반환한다. attempt 2 질문은 attempt 1과 반드시 다르다.
+             */
+            pendingQuestion?: {
+                /** @example 2 */
+                attempt: number;
+                question: string;
+                source: components["schemas"]["GenerationSource"];
+            } | null;
+        };
+        /**
+         * @description Staff Resolution 처리 결과. `RiskUnderstandingState`를 감싸고 흐름 값을 더한다.
+         *
+         *     `RiskUnderstandingState`는 Report에서도 쓰이는 순수 상태 표현이라
+         *     "다음에 무엇을 할지"가 존재하지 않는다. 흐름 값을 그쪽에 넣지 않고
+         *     이 응답 스키마에 둔다.
+         */
+        StaffResolutionResponse: {
+            riskState: components["schemas"]["RiskUnderstandingState"];
+            /**
+             * @description 남은 대상 Risk가 있으면 `NEXT_RISK`, 마지막 Risk였으면 `GO_TO_REPORT`.
+             *     FE가 남은 Risk 수를 세어 자체 판단하지 않는다.
+             */
+            nextAction: components["schemas"]["NextAction"];
+            progress?: {
+                /** @example 3 */
+                currentRiskIndex?: number;
+                /** @example 3 */
+                totalRiskCount?: number;
+            };
+            /** @description 마지막 Risk 처리로 세션이 AWAITING_STAFF_REVIEW로 전이했을 수 있다. */
+            sessionStatus?: components["schemas"]["SessionStatus"];
         };
         ReportResponse: {
             sessionId: string;
@@ -1196,7 +1271,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RiskUnderstandingState"];
+                    "application/json": components["schemas"]["StaffResolutionResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -1238,6 +1313,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /**
+                     * @description 데모용 직원 식별자. **인증된 신원이 아니다.**
+                     *     감사 기록에 남지만 권한 증명으로 쓰이지 않으며,
+                     *     실서비스 확장 시 RBAC로 대체된다(PRD §14.2).
+                     * @example staff-001
+                     */
                     actor: string;
                     /** @description 미해결 항목이 있을 때 필수 */
                     unresolvedReason?: string;

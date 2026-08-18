@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useDemoProduct, useSession } from "@/shared/api/queries";
 import type { ScenarioId } from "@/shared/constants/demo";
+import type { CustomerProfile } from "@/shared/types/domain";
 import { ErrorNote } from "@/shared/ui/error-note";
 import { ScreenSkeleton } from "@/shared/ui/screen-skeleton";
 import { StaffShell, useScenario } from "@/shared/ui/staff-shell";
@@ -11,6 +12,40 @@ const SCENARIO_NOTE: Record<ScenarioId, string> = {
   main: "샘플 상담 내용을 불러와 바로 분석할 수 있습니다.",
   safety: "설명이 사실과 달랐던 상담 기록으로 진행합니다.",
 };
+
+const INVESTMENT_EXPERIENCE_LABEL: Record<string, string> = {
+  LOW: "투자 경험 적음",
+  MEDIUM: "투자 경험 보통",
+  HIGH: "투자 경험 많음",
+};
+
+const FINANCIAL_LITERACY_LABEL: Record<string, string> = {
+  BASIC: "금융 이해도 기초",
+  NORMAL: "금융 이해도 보통",
+  ADVANCED: "금융 이해도 높음",
+};
+
+/**
+ * Describes the customer from the fields the API actually sends.
+ *
+ * This used to be a fixed sentence from the demo fixture, which quietly
+ * contradicted the real profile once a live backend was answering — a screen
+ * about verifying facts should not state one of its own.
+ */
+function customerProfileLine(customer: CustomerProfile | undefined): string {
+  if (!customer) return "";
+  return [
+    customer.ageGroup,
+    customer.investmentExperience
+      ? INVESTMENT_EXPERIENCE_LABEL[customer.investmentExperience]
+      : undefined,
+    customer.financialLiteracy
+      ? FINANCIAL_LITERACY_LABEL[customer.financialLiteracy]
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 export function PrepareScreen({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -69,10 +104,12 @@ export function PrepareScreen({ sessionId }: { sessionId: string }) {
               Product A
             </span>
           </div>
-          <p className="mt-[14px] max-w-[720px] text-[16.5px] leading-[1.7] text-[var(--color-ink-body)]">
-            6개월마다 조건을 평가해 조건이 충족되면 조기상환되는 투자상품입니다. 예금이
-            아니며, 조건에 따라 원금 손실이 발생할 수 있습니다.
-          </p>
+          {product?.archetype === "NO_KNOCK_IN_STEP_DOWN" ? (
+            <p className="mt-[14px] max-w-[720px] text-[16.5px] leading-[1.7] text-[var(--color-ink-body)]">
+              6개월마다 조건을 평가해 조건이 충족되면 조기상환되는 투자상품입니다. 예금이
+              아니며, 조건에 따라 원금 손실이 발생할 수 있습니다.
+            </p>
+          ) : null}
           <p className="mt-[10px] text-[14px] text-[var(--color-muted)]">
             검수된 상품 위험 {risks.length}건 · 상품설명서 원문 근거 포함
           </p>
@@ -89,9 +126,11 @@ export function PrepareScreen({ sessionId }: { sessionId: string }) {
               고객
             </p>
             <p className="text-[18px] font-semibold">{customer?.label}</p>
-            <p className="mt-[8px] text-[15px] leading-[1.65] text-[oklch(0.48_0.01_260)]">
-              투자 경험 2년 · ELS 첫 가입 · 원금 보장 상품을 주로 이용
-            </p>
+            {customerProfileLine(customer) ? (
+              <p className="mt-[8px] text-[15px] leading-[1.65] text-[oklch(0.48_0.01_260)]">
+                {customerProfileLine(customer)}
+              </p>
+            ) : null}
           </div>
           <div>
             <p className="mb-[12px] font-mono text-[12px] font-semibold text-[var(--color-muted)]">
