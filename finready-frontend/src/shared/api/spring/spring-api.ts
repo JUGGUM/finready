@@ -13,7 +13,7 @@ import type {
   ReExplanationResponse,
   ReportResponse,
   RevisionResponse,
-  RiskUnderstandingState,
+  StaffResolutionResponse,
   SessionResponse,
   SessionSnapshotResponse,
   StaffResolutionRequest,
@@ -30,12 +30,17 @@ import type {
  * `/sessions`. Prefixing them with `/api` again would produce
  * `/api/api/...`.
  */
+/** Plain reads and writes. */
+const DEFAULT_TIMEOUT_MS = 15_000;
+/** Coverage analysis and answer classification run LLM calls server-side. */
+const LLM_TIMEOUT_MS = 60_000;
+
 export class SpringFinReadyApi implements FinReadyApi {
   constructor(private readonly baseUrl: string) {}
 
   private async request<T>(
     path: string,
-    init?: { method?: string; body?: unknown },
+    init?: { method?: string; body?: unknown; timeoutMs?: number },
   ): Promise<T> {
     let response: Response;
     try {
@@ -44,11 +49,17 @@ export class SpringFinReadyApi implements FinReadyApi {
         headers: init?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
         body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
         cache: "no-store",
+        // A hung request otherwise leaves the screen spinning with no way
+        // back. LLM-backed steps get a longer budget than plain reads.
+        signal: AbortSignal.timeout(init?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
-    } catch {
+    } catch (cause) {
+      const timedOut = cause instanceof DOMException && cause.name === "TimeoutError";
       throw new FinReadyApiError({
-        code: "INTERNAL_ERROR",
-        message: "서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.",
+        code: timedOut ? "AI_TIMEOUT" : "INTERNAL_ERROR",
+        message: timedOut
+          ? "서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요."
+          : "서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.",
         recoverable: true,
       });
     }
@@ -103,6 +114,7 @@ export class SpringFinReadyApi implements FinReadyApi {
     return this.request<CoverageResponse>(`/sessions/${sessionId}/coverage`, {
       method: "POST",
       body: req ?? {},
+      timeoutMs: LLM_TIMEOUT_MS,
     });
   }
 
@@ -128,7 +140,7 @@ export class SpringFinReadyApi implements FinReadyApi {
   ): Promise<UnderstandingResponse> {
     return this.request<UnderstandingResponse>(
       `/sessions/${sessionId}/understanding`,
-      { method: "POST", body: req },
+      { method: "POST", body: req, timeoutMs: LLM_TIMEOUT_MS },
     );
   }
 
@@ -139,6 +151,7 @@ export class SpringFinReadyApi implements FinReadyApi {
     return this.request<ReExplanationResponse>(`/sessions/${sessionId}/reexplain`, {
       method: "POST",
       body: req,
+      timeoutMs: LLM_TIMEOUT_MS,
     });
   }
 
@@ -149,6 +162,7 @@ export class SpringFinReadyApi implements FinReadyApi {
     return this.request<UnderstandingResponse>(`/sessions/${sessionId}/recheck`, {
       method: "POST",
       body: req,
+      timeoutMs: LLM_TIMEOUT_MS,
     });
   }
 
@@ -156,8 +170,8 @@ export class SpringFinReadyApi implements FinReadyApi {
     sessionId: string,
     riskId: string,
     req: StaffResolutionRequest,
-  ): Promise<RiskUnderstandingState> {
-    return this.request<RiskUnderstandingState>(
+  ): Promise<StaffResolutionResponse> {
+    return this.request<StaffResolutionResponse>(
       `/sessions/${sessionId}/risks/${riskId}/staff-resolution`,
       { method: "POST", body: req },
     );

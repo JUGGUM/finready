@@ -12,7 +12,7 @@ import type {
   ReExplanationResponse,
   ReportResponse,
   RevisionResponse,
-  RiskUnderstandingState,
+  StaffResolutionResponse,
   SessionResponse,
   SessionSnapshotResponse,
   StaffResolutionRequest,
@@ -86,7 +86,7 @@ export interface FinReadyApi {
     sessionId: string,
     riskId: string,
     req: StaffResolutionRequest,
-  ): Promise<RiskUnderstandingState>;
+  ): Promise<StaffResolutionResponse>;
 
   /** GET /sessions/{sessionId}/report */
   getReport(sessionId: string): Promise<ReportResponse>;

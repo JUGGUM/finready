@@ -26,6 +26,7 @@ import type {
   GateOverrideRequest,
   NextAction,
   OverrideRecord,
+  PendingQuestion,
   Question,
   QuestionsResponse,
   ReExplainRequest,
@@ -38,6 +39,7 @@ import type {
   SessionSnapshotResponse,
   SessionStatus,
   StaffResolutionRequest,
+  StaffResolutionResponse,
   SubmitAnswerRequest,
   SubmitRecheckRequest,
   UnderstandingAIStatus,
@@ -52,7 +54,7 @@ import type {
  * branch decision (`nextAction`, `gateStatus`, `canProceedToUnderstanding`,
  * `closeEligibility`) is computed here so the client only has to obey it.
  *
- * Responses are shaped exactly like `contracts/openapi.yml` v1.4.1 — no
+ * Responses are shaped exactly like `contracts/openapi.yml` v1.4.2 — no
  * mock-only fields — so switching to the Spring service is a base-URL
  * change. State is mirrored into sessionStorage so a reload can be served
  * by `GET /sessions/{id}`, as PRD §13 expects of the real service.
@@ -70,6 +72,8 @@ interface RiskUnderstanding {
   staffResolution: StaffResolution | null;
   workflowStatus: NonNullable<RiskUnderstandingState["workflowStatus"]>;
   finalDisposition: RiskUnderstandingState["finalDisposition"];
+  /** Issued and awaiting an answer; cleared once the answer is stored. */
+  pendingQuestion: PendingQuestion | null;
 }
 
 interface StoredRevision {
@@ -192,6 +196,7 @@ function understandingOf(session: MockSession, riskId: string): RiskUnderstandin
     staffResolution: null,
     workflowStatus: "NOT_STARTED",
     finalDisposition: null,
+    pendingQuestion: null,
   };
   return session.understanding[riskId];
 }
@@ -365,7 +370,43 @@ function toUnderstandingState(
     staffResolution: state.staffResolution,
     workflowStatus: state.workflowStatus,
     finalDisposition: state.finalDisposition,
+    // Issued-but-unanswered question. This is what lets a reload restore the
+    // exact wording instead of the client inventing a replacement.
+    pendingQuestion: state.pendingQuestion,
   };
+}
+
+/**
+ * The flow value for a session mid-understanding.
+ *
+ * Null during coverage and after close, where `resumePoint` is the answer
+ * instead — the contract says the two are used at different times, not
+ * interchangeably.
+ */
+function currentNextAction(session: MockSession): NextAction | null {
+  if (session.coverageRevisionId === null) return null;
+  if (
+    session.sessionStatus === "SESSION_CLOSED_BY_STAFF" ||
+    session.sessionStatus === "SESSION_CLOSED_WITH_UNRESOLVED"
+  ) {
+    return null;
+  }
+
+  const manualReview = reportableRiskIds().find(
+    (id) => understandingOf(session, id).workflowStatus === "MANUAL_REVIEW_REQUIRED",
+  );
+  if (manualReview) return "STAFF_RESOLUTION_REQUIRED";
+
+  const open = questionEligibleRiskIds(session).filter(
+    (id) => understandingOf(session, id).workflowStatus !== "COMPLETE",
+  );
+  if (open.length === 0) {
+    return pendingTargets(session).length === 0 ? "GO_TO_REPORT" : null;
+  }
+
+  // A risk with an unanswered attempt-2 question is mid-recheck.
+  const state = understandingOf(session, open[0]);
+  return state.pendingQuestion?.attempt === 2 ? "RECHECK" : "NEXT_RISK";
 }
 
 /* ── answer classification ───────────────────────────────────────── */
@@ -464,7 +505,14 @@ function recordAnswer(
   }
 
   const copy = VERIFIED_RISK_COPY[riskId];
-  const question = attempt === 1 ? copy?.question : copy?.recheckQuestion;
+  // Prefer the wording actually issued, so an answer is always graded against
+  // the question the customer saw.
+  const question =
+    state.pendingQuestion?.attempt === attempt
+      ? state.pendingQuestion.question
+      : attempt === 1
+        ? copy?.question
+        : copy?.recheckQuestion;
   const { aiStatus, reason } = classifyAnswer(riskId, trimmed);
 
   state.attempts.push({
@@ -476,6 +524,9 @@ function recordAnswer(
     aiStatus,
     reason,
   });
+  // Answered, so nothing is outstanding for this risk until we issue a
+  // follow-up below.
+  state.pendingQuestion = null;
 
   let nextAction: NextAction;
   if (aiStatus === "UNDERSTOOD") {
@@ -502,6 +553,22 @@ function recordAnswer(
   }
   save(session);
 
+  // UNCERTAIN never passes through /reexplain, so this response is the only
+  // place a follow-up question can come from. Issuing it here (and persisting
+  // it as attempt 2) is what keeps the client from ever writing its own.
+  let recheckQuestion: string | null = null;
+  if (nextAction === "RECHECK") {
+    recheckQuestion = copy?.recheckQuestion ?? "";
+    state.pendingQuestion = {
+      attempt: attempt + 1,
+      question: recheckQuestion,
+      source: "FALLBACK",
+    };
+  }
+
+  syncStatus(session);
+  save(session);
+
   const targets = questionEligibleRiskIds(session);
   return {
     riskId,
@@ -515,6 +582,8 @@ function recordAnswer(
     workflowStatus: state.workflowStatus,
     finalDisposition: state.finalDisposition,
     nextAction,
+    recheckQuestion,
+    recheckQuestionSource: recheckQuestion ? "FALLBACK" : null,
     progress: {
       currentRiskIndex: targets.indexOf(riskId) + 1,
       totalRiskCount: targets.length,
@@ -566,6 +635,7 @@ export class MockFinReadyApi implements FinReadyApi {
     return {
       ...toSessionResponse(session),
       resumePoint: resumePointOf(session),
+      nextAction: currentNextAction(session),
       currentRevision: revision ? toRevisionResponse(revision) : undefined,
       coverage: session.coverageRevisionId !== null ? toCoverageResponse(session) : null,
       understanding: reportableRiskIds().map((id) =>
@@ -720,11 +790,20 @@ export class MockFinReadyApi implements FinReadyApi {
         riskTitle: findRisk(riskId)?.title ?? riskId,
         question: VERIFIED_RISK_COPY[riskId]?.question ?? "",
         source: "FALLBACK",
+        // This endpoint only ever hands out the opening question.
+        attempt: 1,
         orderIndex: index + 1,
       }));
       for (const riskId of targets) {
         const state = understandingOf(session, riskId);
         if (state.workflowStatus === "NOT_STARTED") state.workflowStatus = "IN_PROGRESS";
+        if (state.attempts.length === 0 && !state.pendingQuestion) {
+          state.pendingQuestion = {
+            attempt: 1,
+            question: VERIFIED_RISK_COPY[riskId]?.question ?? "",
+            source: "FALLBACK",
+          };
+        }
       }
       syncStatus(session);
       audit(session, "QUESTION_SHOWN", `이해확인 질문 ${targets.length}건 생성`, "SYSTEM");
@@ -774,6 +853,13 @@ export class MockFinReadyApi implements FinReadyApi {
     }
 
     const copy = VERIFIED_RISK_COPY[req.riskId];
+    // The follow-up ships with the re-explanation and is persisted as attempt
+    // 2, so a reload mid-recheck restores this exact wording.
+    state.pendingQuestion = {
+      attempt: state.attempts.length + 1,
+      question: copy?.recheckQuestion ?? "",
+      source: "FALLBACK",
+    };
     audit(
       session,
       "REEXPLANATION_SHOWN",
@@ -803,7 +889,7 @@ export class MockFinReadyApi implements FinReadyApi {
     sessionId: string,
     riskId: string,
     req: StaffResolutionRequest,
-  ): Promise<RiskUnderstandingState> {
+  ): Promise<StaffResolutionResponse> {
     await wait(LATENCY_MS.fast);
     const session = getOrFail(sessionId);
     assertOpen(session);
@@ -837,7 +923,19 @@ export class MockFinReadyApi implements FinReadyApi {
       "STAFF",
     );
     save(session);
-    return toUnderstandingState(session, riskId);
+
+    const targets = questionEligibleRiskIds(session);
+    return {
+      riskState: toUnderstandingState(session, riskId),
+      // The server decides where the staff member goes next; the client does
+      // not count remaining risks to work it out.
+      nextAction: resolveNextAction(session, riskId),
+      progress: {
+        currentRiskIndex: Math.max(targets.indexOf(riskId) + 1, 1),
+        totalRiskCount: targets.length,
+      },
+      sessionStatus: session.sessionStatus,
+    };
   }
 
   async getReport(sessionId: string): Promise<ReportResponse> {

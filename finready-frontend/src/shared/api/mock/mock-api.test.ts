@@ -273,6 +273,114 @@ describe("nextAction branching", () => {
     expect(state?.attempts).toHaveLength(2);
   });
 
+  it("issues the follow-up question for UNCERTAIN, which never sees /reexplain", async () => {
+    const sessionId = await readySession();
+
+    const result = await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.initial.vague,
+      answerSource: ANSWER_SOURCE,
+    });
+
+    // UNCERTAIN skips the re-explanation, so this response is the only place
+    // the attempt-2 wording can come from.
+    expect(result.nextAction).toBe("RECHECK");
+    expect(result.recheckQuestion).toBeTruthy();
+    expect(result.recheckQuestion).not.toBe(result.question);
+    expect(result.recheckQuestionSource).toBe("FALLBACK");
+
+    // And it survives a reload, identically.
+    const state = (await api.getSession(sessionId)).understanding?.find(
+      (u) => u.riskId === "R01",
+    );
+    expect(state?.pendingQuestion?.attempt).toBe(2);
+    expect(state?.pendingQuestion?.question).toBe(result.recheckQuestion);
+  });
+
+  it("restores the open question, and only that one, after a reload", async () => {
+    const sessionId = await readySession();
+
+    const opening = await api.getSession(sessionId);
+    const r01Opening = opening.understanding?.find((u) => u.riskId === "R01");
+    expect(r01Opening?.pendingQuestion?.attempt).toBe(1);
+    expect(opening.nextAction).toBe("NEXT_RISK");
+
+    await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.initial.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    const reexplained = await api.reexplain(sessionId, { riskId: "R01" });
+
+    const midRecheck = await api.getSession(sessionId);
+    const r01 = midRecheck.understanding?.find((u) => u.riskId === "R01");
+    expect(r01?.pendingQuestion?.attempt).toBe(2);
+    expect(r01?.pendingQuestion?.question).toBe(reexplained.recheckQuestion);
+    expect(midRecheck.nextAction).toBe("RECHECK");
+
+    // An answered risk has nothing outstanding.
+    await api.submitRecheck(sessionId, {
+      riskId: "R01",
+      answer: correctAnswer("R01", "recheck"),
+      answerSource: ANSWER_SOURCE,
+    });
+    const after = await api.getSession(sessionId);
+    expect(
+      after.understanding?.find((u) => u.riskId === "R01")?.pendingQuestion,
+    ).toBeNull();
+  });
+
+  it("leaves the risks open in order, without skipping one", async () => {
+    const sessionId = await readySession();
+
+    // Answering R01 must leave exactly R02 and R03 open, in that order. The
+    // client picks the first of these, so a wrong order here shows up as a
+    // skipped risk on screen.
+    const first = await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: correctAnswer("R01"),
+      answerSource: ANSWER_SOURCE,
+    });
+    expect(first.progress?.currentRiskIndex).toBe(1);
+
+    const afterR01 = await api.getSession(sessionId);
+    const stillOpen = (afterR01.understanding ?? [])
+      .filter((u) => u.workflowStatus !== "COMPLETE")
+      .map((u) => u.riskId);
+    expect(stillOpen).toEqual(["R02", "R03"]);
+
+    const second = await api.submitAnswer(sessionId, {
+      riskId: "R02",
+      answer: correctAnswer("R02"),
+      answerSource: ANSWER_SOURCE,
+    });
+    expect(second.progress?.currentRiskIndex).toBe(2);
+
+    const afterR02 = await api.getSession(sessionId);
+    expect(
+      (afterR02.understanding ?? [])
+        .filter((u) => u.workflowStatus !== "COMPLETE")
+        .map((u) => u.riskId),
+    ).toEqual(["R03"]);
+  });
+
+  it("reports STAFF_RESOLUTION_REQUIRED on reload once attempts run out", async () => {
+    const sessionId = await readySession();
+    await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.initial.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    await api.submitRecheck(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.recheck.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+
+    const snapshot = await api.getSession(sessionId);
+    expect(snapshot.nextAction).toBe("STAFF_RESOLUTION_REQUIRED");
+  });
+
   it("resumes on the staff screen while a risk awaits manual review", async () => {
     const sessionId = await readySession();
     await api.submitAnswer(sessionId, {
@@ -305,11 +413,12 @@ describe("staff resolution", () => {
       answerSource: ANSWER_SOURCE,
     });
 
-    const state = await api.resolveByStaff(sessionId, "R01", {
+    const result = await api.resolveByStaff(sessionId, "R01", {
       disposition: "RESOLVED_BY_STAFF",
       reason: "상품설명서를 함께 보며 재설명 후 구두로 확인함",
       actor: ACTOR,
     });
+    const state = result.riskState;
 
     // The three values coexist — this is the product's core claim.
     expect(state.attempts?.every((a) => a.aiStatus === "MISUNDERSTOOD")).toBe(true);
@@ -318,6 +427,53 @@ describe("staff resolution", () => {
     expect(state.staffResolution?.reason).toBe(
       "상품설명서를 함께 보며 재설명 후 구두로 확인함",
     );
+  });
+
+  it("returns the next step so the client never counts remaining risks", async () => {
+    const sessionId = await readySession();
+    await api.submitAnswer(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.initial.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    await api.submitRecheck(sessionId, {
+      riskId: "R01",
+      answer: RISK_ANSWERS.R01.recheck.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+
+    // R02 and R03 are still open, so this is not the last risk.
+    const midway = await api.resolveByStaff(sessionId, "R01", {
+      disposition: "RESOLVED_BY_STAFF",
+      reason: "고객과 함께 확인 후 처리",
+      actor: ACTOR,
+    });
+    expect(midway.nextAction).toBe("NEXT_RISK");
+    expect(midway.progress?.totalRiskCount).toBe(3);
+
+    // Settle R02 the ordinary way so R03 really is the last one outstanding.
+    await api.submitAnswer(sessionId, {
+      riskId: "R02",
+      answer: correctAnswer("R02"),
+      answerSource: ANSWER_SOURCE,
+    });
+    await api.submitAnswer(sessionId, {
+      riskId: "R03",
+      answer: RISK_ANSWERS.R03.initial.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    await api.submitRecheck(sessionId, {
+      riskId: "R03",
+      answer: RISK_ANSWERS.R03.recheck.wrong,
+      answerSource: ANSWER_SOURCE,
+    });
+    const last = await api.resolveByStaff(sessionId, "R03", {
+      disposition: "RESOLVED_BY_STAFF",
+      reason: "마지막 항목까지 함께 확인 후 처리",
+      actor: ACTOR,
+    });
+    expect(last.nextAction).toBe("GO_TO_REPORT");
+    expect(last.sessionStatus).toBe("AWAITING_STAFF_REVIEW");
   });
 
   it("requires a reason", async () => {

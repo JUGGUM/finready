@@ -6,6 +6,7 @@ import { OverrideDialog } from "@/screens/s03-coverage/override-dialog";
 import { RiskDetail } from "@/screens/s03-coverage/risk-detail";
 import {
   useAnalyzeCoverage,
+  useCachedCoverage,
   useDemoProduct,
   useOverrideGate,
   useSession,
@@ -33,6 +34,7 @@ export function CoverageScreen({ sessionId }: { sessionId: string }) {
   const demo = useDemoProduct();
   const session = useSession(sessionId);
   const reanalyze = useAnalyzeCoverage(sessionId);
+  const cachedCoverage = useCachedCoverage(sessionId);
   const override = useOverrideGate(sessionId);
   const [overrideOpen, setOverrideOpen] = useState(false);
 
@@ -51,26 +53,64 @@ export function CoverageScreen({ sessionId }: { sessionId: string }) {
   }
   if (!demo.data || !session.data) return <ScreenSkeleton />;
 
-  const coverage = session.data.coverage;
+  // Prefer the coverage response the server most recently returned; fall back
+  // to the session snapshot, which the contract allows to be null.
+  const coverage = cachedCoverage.data ?? session.data.coverage;
   const revisionText = session.data.currentRevision?.text ?? "";
   const revision = session.data.currentRevision?.revision ?? 1;
   const query = scenario === "safety" ? "?scenario=safety" : "";
   const risks = demo.data.risks ?? [];
 
+  // The session status tells us whether analysis has already happened, even
+  // when this particular response did not include the result.
+  const analysed =
+    session.data.sessionStatus !== "DRAFT" &&
+    (session.data.currentRevision?.revision ?? 0) > 0;
+
   if (!coverage) {
     return (
       <StaffShell sessionId={sessionId} revision={revision} current="s03">
         <div className="mx-auto max-w-[1360px] px-[40px] py-[64px]">
-          <p className="text-[17px] text-[var(--color-ink-muted)]">
-            아직 분석된 상담 내용이 없습니다.
-          </p>
-          <button
-            type="button"
-            onClick={() => router.push(`/session/${sessionId}/transcript${query}`)}
-            className="mt-[20px] rounded-[10px] bg-[var(--color-accent)] px-[28px] py-[14px] text-[15.5px] font-semibold text-white hover:bg-[var(--color-accent-hover)]"
-          >
-            상담 내용 입력하기
-          </button>
+          {analysed ? (
+            <>
+              {/* The session says coverage exists but this snapshot did not
+                  carry it. Re-running the analysis is idempotent for the same
+                  revision, so the staff member can ask for it — rather than
+                  the screen quietly re-posting and hiding the gap. */}
+              <p className="text-[17px] leading-[1.6] text-[var(--color-ink-muted)]">
+                이 상담의 설명 충족도 결과를 화면에 불러오지 못했습니다. 분석 기록은
+                남아 있으며, 다시 불러와도 판정은 바뀌지 않습니다.
+              </p>
+              {reanalyze.isError ? (
+                <ErrorNote
+                  className="mt-[20px] max-w-[720px]"
+                  error={reanalyze.error}
+                  onRetry={() => reanalyze.mutate(undefined)}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => reanalyze.mutate(undefined)}
+                disabled={reanalyze.isPending}
+                className="mt-[20px] rounded-[10px] bg-[var(--color-accent)] px-[28px] py-[14px] text-[15.5px] font-semibold text-white hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-accent-disabled)]"
+              >
+                {reanalyze.isPending ? "불러오는 중…" : "설명 충족도 다시 불러오기"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-[17px] text-[var(--color-ink-muted)]">
+                아직 분석된 상담 내용이 없습니다.
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push(`/session/${sessionId}/transcript${query}`)}
+                className="mt-[20px] rounded-[10px] bg-[var(--color-accent)] px-[28px] py-[14px] text-[15.5px] font-semibold text-white hover:bg-[var(--color-accent-hover)]"
+              >
+                상담 내용 입력하기
+              </button>
+            </>
+          )}
         </div>
       </StaffShell>
     );

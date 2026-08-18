@@ -57,6 +57,8 @@ export type Question = Schemas["Question"];
 export type UnderstandingResponse = Schemas["UnderstandingResponse"];
 export type ReExplanationResponse = Schemas["ReExplanationResponse"];
 export type RiskUnderstandingState = Schemas["RiskUnderstandingState"];
+/** Wraps the risk state with the flow values the report form has no place for. */
+export type StaffResolutionResponse = Schemas["StaffResolutionResponse"];
 export type ReportResponse = Schemas["ReportResponse"];
 export type ApiErrorBody = Schemas["Error"];
 /** The contract's closed set of error codes. */
@@ -70,6 +72,17 @@ export type UnderstandingAttempt = NonNullable<
 /** Staff resolution as it appears on a risk's understanding state. */
 export type StaffResolutionRecord = NonNullable<
   RiskUnderstandingState["staffResolution"]
+>;
+
+/**
+ * A question that was issued but not yet answered.
+ *
+ * This is what makes a mid-step reload recoverable: the server re-serves the
+ * exact wording it already issued, so the client never has to reconstruct a
+ * question it did not receive.
+ */
+export type PendingQuestion = NonNullable<
+  RiskUnderstandingState["pendingQuestion"]
 >;
 
 export type AuditEvent = NonNullable<ReportResponse["auditEvents"]>[number];
