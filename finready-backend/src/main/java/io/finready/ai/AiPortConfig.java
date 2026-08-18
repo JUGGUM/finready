@@ -2,9 +2,13 @@ package io.finready.ai;
 
 import io.finready.coverage.CoverageClassifier;
 import io.finready.coverage.SemanticVerifier;
+import io.finready.understanding.AnswerJudge;
+import io.finready.understanding.QuestionGenerator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
 
 /**
  * LLM 포트의 기본 구현. <b>실제 구현체가 없을 때만</b> 등록된다.
@@ -33,6 +37,25 @@ public class AiPortConfig {
 	SemanticVerifier unconfiguredSemanticVerifier() {
 		return (transcript, requests) -> {
 			throw unconfigured("Evidence Semantic Verifier");
+		};
+	}
+
+	/**
+	 * 여기만 예외적으로 <b>조용히 비어 있는 결과를 돌려준다.</b> 질문 생성 실패는 계약이 정한
+	 * 정상 경로이고(검수된 {@code fallbackQuestion} 으로 대체 + {@code source: FALLBACK}),
+	 * 호출부가 이미 그 경로를 갖고 있다. 여기서 던지면 LLM 없이 F04 를 돌려볼 수 없다.
+	 */
+	@Bean
+	@ConditionalOnMissingBean(QuestionGenerator.class)
+	QuestionGenerator unconfiguredQuestionGenerator() {
+		return seeds -> List.of();
+	}
+
+	@Bean
+	@ConditionalOnMissingBean(AnswerJudge.class)
+	AnswerJudge unconfiguredAnswerJudge() {
+		return request -> {
+			throw unconfigured("답변 판정기");
 		};
 	}
 

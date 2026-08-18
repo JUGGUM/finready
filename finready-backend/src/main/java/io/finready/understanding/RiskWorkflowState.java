@@ -58,4 +58,22 @@ public class RiskWorkflowState {
 		this.finalDisposition = null;
 		this.updatedAt = OffsetDateTime.now();
 	}
+
+	/**
+	 * 상태를 바꾸는 유일한 경로. {@link WorkflowStateMachine} 을 인자로 받는 이유는
+	 * {@code ConsultationSession.transitionTo} 와 같다 — 이 메서드를 부르려면 상태머신을
+	 * 손에 쥐어야 하고, 상태머신은 반드시 전이표를 본다. setter 를 열면 서비스가 전이표를
+	 * 건너뛰는 경로가 생기고, TRD §4.2 가 요구한 "갱신 일원화"가 깨진다.
+	 *
+	 * @param disposition COMPLETE 일 때만 non-null. 그 외에는 null 이어야 한다
+	 */
+	public void transitionTo(WorkflowStatus to,
+	                         FinalDisposition disposition,
+	                         WorkflowStateMachine stateMachine) {
+		stateMachine.assertCanTransition(this.workflowStatus, to, this.riskId);
+		stateMachine.assertDispositionConsistent(to, disposition);
+		this.workflowStatus = to;
+		this.finalDisposition = disposition;
+		this.updatedAt = OffsetDateTime.now();
+	}
 }

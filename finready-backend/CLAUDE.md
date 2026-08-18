@@ -238,6 +238,20 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   `ai/AiPortConfig`가 `@ConditionalOnMissingBean` 스텁을 등록해 **LLM 없이도 기동**하되,
   호출되면 설정 누락을 명시적으로 알린다 — 빈 결과를 돌려주면 전 Risk가 "설명 안 됨"으로
   읽혀 Gate가 잠긴다 (2026-08-18)
+- **F04 질문 발급 + F05 답변 판정(attempt 1)** — `POST /sessions/{id}/questions`,
+  `POST /sessions/{id}/understanding`. F03과 같은 트랜잭션 구조(`UnderstandingWriter`).
+  · `understanding/WorkflowStateMachine` — Risk 단위 전이표. TRD §4.2 "갱신 일원화"를
+  `ConsultationSession.transitionTo`와 같은 패턴으로 강제한다(상태머신을 인자로 받게 해
+  전이표를 건너뛸 수 없게). 세션 상태머신과 **합치지 않았다** — 축이 다르다
+  · `understanding/NextActionResolver` — 계약 표(TRD §6.6)를 그대로. 프론트가 이 값만 보고
+  분기하므로(규칙 8) 한 곳에만 둔다. **UNCERTAIN은 REEXPLAIN으로 가지 않는다**(PRD §7.5) —
+  헷갈리기 쉬워 테스트로 고정
+  · attempt는 **경로가 정한다**(`/understanding`=1, `/recheck`=2). 클라이언트가 보내지
+  않으므로 2를 1로 바꿔 재시도할 수 없다
+  · 질문 생성 실패는 **정상 경로**다 — 검수 `fallbackQuestion`으로 대체 + `source: FALLBACK`.
+  그래서 `QuestionGenerator` 스텁만 예외적으로 빈 결과를 돌려준다(던지면 F04를 못 돌려본다)
+  · Override로 제외된 Risk도 `COMPLETE/SKIPPED_BY_OVERRIDE`로 기록한다 — 리포트에서
+  "왜 안 물었나"가 보여야 한다 (2026-08-18)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -279,16 +293,22 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
    그러면 WARN_ONLY EXPLAINED가 semantic 없이 남아 규칙 3 때문에 INSUFFICIENT로 접힌다
    (= 불필요한 경고). 대안은 EXPLAINED 후보 전체를 돌리는 것이고 토큰이 늘어난다. 상세는
    `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
-2. Understanding / 재설명 / Staff Resolution (F04~F07)
-   → `RiskWorkflowState`에 상태 전이 메서드가 아직 없다. 갱신은 understanding 모듈에서
-   일원화하라는 TRD §4.2대로 그때 설계할 것
+2. **F06 재설명 + F07 recheck·직원 처리**
+   → F04/F05는 완료. `WorkflowStateMachine`·`NextActionResolver`·`UnderstandingWriter`가
+   이미 있으니 그 위에 얹는다
+   → `/recheck`는 `UnderstandingService.judge(..., RECHECK_ATTEMPT)`를 그대로 재사용하면
+   된다 — attempt만 다르다
+   → `/reexplain`은 응답에 **후속 질문(attempt 2)을 함께 싣고 영속화**해야 한다.
+   그래야 새로고침 후 `pendingQuestion`으로 복구된다
+   → Guardrail 금칙어 목록이 미결정이다 (TRD D-04)
 3. Report + Close + Audit (F08)
    → `ConsultationSession.closedAt`·`closedBy`·`unresolvedReason`을 채우는 경로가 아직 없다
 4. 오프라인 평가 모듈 + Rule baseline
 
 리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·
-`consultation_revision`·`coverage_result`·`gate_override` 7개가 있다.
-나머지(understanding·explanation·audit·ai 계열)는 해당 기능 작업에서 만든다.
+`consultation_revision`·`coverage_result`·`gate_override`·`session_question`·
+`understanding_result`·`risk_workflow_state` 10개가 있다.
+나머지(`staff_resolution`·`re_explanation`·`audit_event`·`llm_call_log`)는 해당 기능 작업에서 만든다.
 
 > **병행(배포 연동)**: F01이 생겨 프론트가 붙을 수 있다. 프론트에 배포 URL 전달 →
 > 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
