@@ -6,7 +6,9 @@ import com.anthropic.models.messages.CacheControlEphemeral;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.Usage;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import org.slf4j.Logger;
@@ -99,6 +101,9 @@ public class AiGateway {
 		MessageCreateParams.Builder params = MessageCreateParams.builder()
 				.model(properties.model())
 				.maxTokens(request.maxTokens())
+				// 걸지 않으면 Sonnet 4.6 기본값이 high 다. 분류·다듬기에는 과하고
+				// 레이턴시와 토큰이 그만큼 더 든다 (TRD §14 예산 12초)
+				.outputConfig(OutputConfig.builder().effort(request.effort()).build())
 				// 시스템 프롬프트를 캐시 prefix 로 쓴다. 전 세션 공통이라 여기가 캐시가 가장 잘 듣는
 				// 지점이며, 캐시는 prefix 일치라 이 앞에 변하는 값을 두면 전부 무효가 된다
 				.systemOfTextBlockParams(List.of(TextBlockParam.builder()
@@ -114,6 +119,7 @@ public class AiGateway {
 		}
 
 		Message message = client.messages().create(params.build());
+		logUsage(request, message);
 
 		String text = message.content().stream()
 				.flatMap(block -> block.text().stream())
@@ -125,6 +131,32 @@ public class AiGateway {
 					.formatted(message.stopReason()));
 		}
 		return text;
+	}
+
+	/**
+	 * 토큰 사용량과 <b>캐시 적중</b>을 남긴다.
+	 *
+	 * <p>이게 없으면 두 가지를 영영 모른다. ① 크레딧이 어디로 나가는지 — 세션당 호출이
+	 * 6~9회라 어느 단계가 비싼지 알아야 줄일 곳을 정한다. ② prompt caching 이 실제로
+	 * 붙는지 — 캐시 미달(모델별 최소 토큰)이면 <b>오류 없이 조용히</b> 안 걸리므로,
+	 * {@code cacheRead} 가 계속 0 이면 그게 유일한 신호다.
+	 *
+	 * <p>레이턴시만으로는 판단할 수 없다. 실행 간 편차가 캐시 효과보다 크다는 것이
+	 * 이미 관측됐다(같은 프롬프트로 verifier 5.0s ~ 12.0s).
+	 */
+	private void logUsage(AiCall request, Message message) {
+		try {
+			Usage usage = message.usage();
+			log.info("LLM usage — stage={}, in={}, out={}, cacheRead={}, cacheWrite={}",
+					request.stage(),
+					usage.inputTokens(),
+					usage.outputTokens(),
+					usage.cacheReadInputTokens().orElse(0L),
+					usage.cacheCreationInputTokens().orElse(0L));
+		} catch (RuntimeException ex) {
+			// 관측 실패가 본 요청을 죽이지 않게 한다
+			log.debug("usage 기록 실패 (stage={})", request.stage(), ex);
+		}
 	}
 
 	/**
@@ -155,6 +187,10 @@ public class AiGateway {
 	 * @param summary       프롬프트 <b>전문이 아니라 요약</b>이다. 상담 원문 전체를 넣으면
 	 *                      로그 테이블이 상담 내용의 사본이 된다
 	 * @param promptVersion Hold-out 재현 조건이다 (TRD §7.2). 프롬프트를 고치면 반드시 올린다
+	 * @param systemPrompt  <b>캐시 prefix 다.</b> 세션마다 달라지는 값을 여기 넣으면 캐시가
+	 *                      통째로 무효가 된다 — 변하는 것은 {@code userMessage} 로 보낸다
+	 * @param effort        낮출수록 빠르고 싸지만 추론이 얕아진다. 의미 판단이 필요한 단계에서
+	 *                      아끼면 정확히 그 단계의 재현율이 떨어진다
 	 */
 	public record AiCall(String sessionId,
 	                     String stage,
@@ -162,7 +198,8 @@ public class AiGateway {
 	                     String systemPrompt,
 	                     String userMessage,
 	                     String summary,
-	                     long maxTokens) {
+	                     long maxTokens,
+	                     OutputConfig.Effort effort) {
 	}
 
 	@FunctionalInterface

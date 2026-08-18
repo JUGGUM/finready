@@ -27,6 +27,17 @@ public interface CoverageClassifier {
 	List<RiskVerdict> classify(String transcript, List<RiskPrompt> risks);
 
 	/**
+	 * 이 구현이 쓰는 프롬프트 버전. <b>Hold-out 재현 조건</b>이라(TRD §7.2) 응답의
+	 * {@code analysis.promptVersion} 으로 나가야 실험할 때마다 DB 를 뒤지지 않는다.
+	 *
+	 * <p>{@code default} 인 이유는 스텁을 람다로 두기 위해서다 — 추상 메서드가 둘이면
+	 * 함수형 인터페이스가 아니게 되어 {@code AiPortConfig} 의 스텁이 전부 익명 클래스가 된다.
+	 */
+	default String promptVersion() {
+		return null;
+	}
+
+	/**
 	 * @param riskId Risk 식별자 (R01~R09)
 	 * @param title  화면·프롬프트에 쓰는 제목
 	 * @param fact   이 Risk 가 설명됐다고 볼 수 있는 사실. 검수된 값이다

@@ -1,5 +1,6 @@
 package io.finready.ai;
 
+import com.anthropic.models.messages.OutputConfig;
 import io.finready.understanding.AnswerJudge;
 import io.finready.understanding.UnderstandingStatus;
 import tools.jackson.databind.JsonNode;
@@ -15,9 +16,16 @@ import tools.jackson.databind.JsonNode;
  */
 class ClaudeAnswerJudge implements AnswerJudge {
 
-	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2) */
-	private static final String PROMPT_VERSION = "judge-v1";
+	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2). v2: effort 명시 */
+	private static final String PROMPT_VERSION = "judge-v2";
 	private static final String STAGE = "ANSWER_JUDGE";
+
+	/**
+	 * 분류기와 같은 medium. MISUNDERSTOOD 와 UNCERTAIN 을 가르려면 답변의 의도를 읽어야 하는데,
+	 * 이 판정이 틀리면 재설명으로 갈 고객이 직원에게 넘어가거나 그 반대가 된다(PRD §7.5).
+	 * 다만 입력이 짧아(질문 1 + 답변 1) 추론 부담 자체는 분류기보다 작다.
+	 */
+	private static final OutputConfig.Effort EFFORT = OutputConfig.Effort.MEDIUM;
 
 	private static final String SYSTEM_PROMPT = """
 			당신은 ELS 상담에서 고객이 특정 위험을 이해했는지 판정하는 도구다.
@@ -77,7 +85,8 @@ class ClaudeAnswerJudge implements AnswerJudge {
 				buildUserMessage(request),
 				"riskId=%s, attempt=%d, answerChars=%d"
 						.formatted(request.riskId(), request.attempt(), request.answer().length()),
-				1024L);
+				1024L,
+				EFFORT);
 
 		return gateway.call(call, this::parse);
 	}

@@ -241,7 +241,9 @@ public class CoverageAnalysisService {
 					provenanceById.get(risk.getRiskId()),
 					relation == null ? null : relation.relation()));
 		}
-		return new Analysis(results, classifierMs, verifierMs);
+		return new Analysis(results, classifierMs, verifierMs,
+				classifier.promptVersion(),
+				verifierTargets.isEmpty() ? null : semanticVerifier.promptVersion());
 	}
 
 	/**
@@ -387,11 +389,31 @@ public class CoverageAnalysisService {
 	 * 결과와 레이턴시를 함께 돌려준다. 레이턴시를 서비스 필드에 담으면 싱글턴 빈에서
 	 * 동시 요청끼리 서로의 값을 덮어쓴다 — 관측값이라 틀려도 티가 안 나는 종류의 버그다.
 	 */
-	private record Analysis(List<CoverageResult> results, long classifierMs, long verifierMs) {
+	private record Analysis(List<CoverageResult> results,
+	                       long classifierMs,
+	                       long verifierMs,
+	                       String classifierPromptVersion,
+	                       String verifierPromptVersion) {
 
 		CoverageResponse.AnalysisView toView() {
-			// promptVersion 은 포트가 아직 노출하지 않는다. 채울 수 없는 값을 지어내지 않는다
-			return new CoverageResponse.AnalysisView(classifierMs, verifierMs, null, 0);
+			return new CoverageResponse.AnalysisView(
+					classifierMs, verifierMs, promptVersionLabel(), 0);
+		}
+
+		/**
+		 * 계약의 {@code promptVersion} 은 문자열 하나지만 판정은 <b>두 프롬프트가 함께</b>
+		 * 만든다. 분류기 버전만 적으면 Verifier 를 고친 실험이 같은 값으로 찍혀 재현이 안 된다.
+		 * 계약은 형식만 정하므로(자유 문자열) 둘을 합쳐 적는다.
+		 *
+		 * <p>정확한 호출별 버전은 {@code llm_call_log.prompt_version} 에 따로 남는다.
+		 */
+		private String promptVersionLabel() {
+			if (classifierPromptVersion == null) {
+				return null;
+			}
+			return verifierPromptVersion == null
+					? classifierPromptVersion
+					: classifierPromptVersion + "+" + verifierPromptVersion;
 		}
 	}
 }

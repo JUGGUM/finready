@@ -30,6 +30,14 @@ public interface SemanticVerifier {
 	List<RelationVerdict> verify(String transcript, List<VerificationRequest> requests);
 
 	/**
+	 * 이 구현이 쓰는 프롬프트 버전 (TRD §7.2). 분류기와 따로 관리한다 — 한쪽만 고치는 일이
+	 * 잦고, 그때 어느 쪽이 바뀌었는지가 재현에 필요하다.
+	 */
+	default String promptVersion() {
+		return null;
+	}
+
+	/**
 	 * @param fact         이 Risk 가 설명됐다고 볼 수 있는 사실. 검수된 값이다
 	 * @param evidenceText 분류기가 인용한 구간. 서버가 원문 대조를 통과시킨 것만 넘어온다
 	 */

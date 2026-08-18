@@ -1,5 +1,6 @@
 package io.finready.ai;
 
+import com.anthropic.models.messages.OutputConfig;
 import io.finready.coverage.SemanticVerifier;
 import io.finready.coverage.SemanticRelation;
 import tools.jackson.databind.JsonNode;
@@ -16,9 +17,25 @@ import java.util.List;
  */
 class ClaudeSemanticVerifier implements SemanticVerifier {
 
-	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2) */
-	private static final String PROMPT_VERSION = "verifier-v1";
+	/**
+	 * 프롬프트를 고치면 반드시 올린다 (TRD §7.2).
+	 *
+	 * <p>v1 → v2: effort 명시(v1 은 안 걸어 기본 high 로 돌았다), reason 길이 제한.
+	 *
+	 * <p>v2 → v3: <b>분류기와 같은 핵심/부연 기준을 넣었다.</b> v2 까지는 이 기준이
+	 * 분류기(coverage-v2)에만 있어서, 분류기가 "부연이 빠진 건 EXPLAINED"로 판정한 것을
+	 * Verifier 가 옛 기준으로 다시 깎는 일이 관측됐다(R04: classifier EXPLAINED →
+	 * verifier INSUFFICIENT). 두 단계가 다른 잣대를 쓰면 경계 케이스가 실행마다 흔들린다.
+	 */
+	private static final String PROMPT_VERSION = "verifier-v3";
 	private static final String STAGE = "SEMANTIC_VERIFY";
+
+	/**
+	 * 분류기(medium)보다 높다. 이 단계가 잡아야 하는 것이 "낙인 없음 → 원금 지켜짐" 같은
+	 * <b>표현은 비슷한데 의미가 반대인</b> 경우라, 여기서 추론을 아끼면 정확히 그 재현율이 떨어진다.
+	 * 대상 Risk 만 도는 호출이라 전체 비용에서 차지하는 비중도 작다.
+	 */
+	private static final OutputConfig.Effort EFFORT = OutputConfig.Effort.HIGH;
 
 	private static final String SYSTEM_PROMPT = """
 			당신은 ELS 상담 검토 보조 도구의 근거 검증 단계다.
@@ -31,11 +48,39 @@ class ClaudeSemanticVerifier implements SemanticVerifier {
 
 			## 판정 기준
 
-			- SUPPORTS: 인용 구간이 해당 사실을 정확히 전달한다.
+			- SUPPORTS: 인용 구간이 해당 사실의 핵심을 정확히 전달한다.
 			- CONTRADICTS: 인용 구간이 해당 사실과 반대되는 내용을 전달하거나,
 			  고객이 위험을 반대로 이해하게 만든다.
 			- INSUFFICIENT: 관련은 있으나 사실의 핵심이 빠져 있다.
 			- UNRELATED: 인용 구간이 해당 사실과 관련이 없다.
+
+			## 무엇이 "핵심"인가
+
+			사실 설명에는 핵심과 부연이 섞여 있다. 기준은
+			**고객이 이 위험 때문에 무엇을 잃을 수 있는지 전달되었는가**다.
+
+			- 핵심: 그 위험이 실제로 존재한다는 것, 그리고 고객이 입을 수 있는 불이익
+			- 부연: 그 판정을 계산하는 방법 — 기준 수치, 산식, 차수, 평가 시점 등
+
+			**부연이 빠졌다는 이유로 INSUFFICIENT를 주지 않는다.** 핵심이 전달되었으면 SUPPORTS다.
+
+			예시:
+			- 사실: "만기상환금액은 만기평가일 종가라는 단일 시점을 기준으로, 세 기초자산 중
+			  성과가 가장 낮은 하나를 기준으로 산정된다"
+			  인용: "만기에는 세 지수 중에 가장 많이 떨어진 지수를 기준으로 상환금액이 결정되고요"
+			  → SUPPORTS. 고객이 알아야 할 불이익(최저 성과 자산이 결과를 정한다)이 전달됐다.
+			  "단일 시점"은 계산 방법이라 부연이다.
+
+			- 단, 손실 **범위**처럼 그 수치 자체가 불이익인 경우는 수치가 핵심이다.
+			  "손실이 날 수 있다"만으로는 "최대 -100%"를 전달했다고 볼 수 없다.
+
+			## 이미 내려진 판정을 다시 하지 않는다
+
+			앞 단계가 "이 위험이 설명되었는가"를 판정했다. 당신은 그것을 재검토하지 않는다.
+			**인용 구간과 사실 사이의 의미 관계만** 본다.
+
+			인용이 사실의 핵심을 담고 있으면 SUPPORTS다. 상담 전체에서 그 위험을 더 자세히
+			설명했어야 한다고 생각되더라도, 그것은 당신이 판정할 것이 아니다.
 
 			## 특히 주의할 것
 
@@ -53,16 +98,22 @@ class ClaudeSemanticVerifier implements SemanticVerifier {
 
 			다른 설명 없이 JSON만 출력한다.
 
-			{"results":[{"riskId":"R01","relation":"SUPPORTS","reason":"판정 근거를 한국어 한두 문장으로"}]}
+			{"results":[{"riskId":"R01","relation":"SUPPORTS","reason":"판정 근거"}]}
 
 			- 요청받은 모든 riskId에 대해 정확히 하나씩 결과를 낸다. 빠뜨리거나 중복하지 않는다.
 			- relation은 위 4가지 값 중 하나만 쓴다. 다른 문자열을 만들지 않는다.
+			- reason은 한 문장, 60자 이내로 쓴다.
 			""";
 
 	private final AiGateway gateway;
 
 	ClaudeSemanticVerifier(AiGateway gateway) {
 		this.gateway = gateway;
+	}
+
+	@Override
+	public String promptVersion() {
+		return PROMPT_VERSION;
 	}
 
 	@Override
@@ -74,7 +125,8 @@ class ClaudeSemanticVerifier implements SemanticVerifier {
 				SYSTEM_PROMPT,
 				buildUserMessage(transcript, requests),
 				"targets=%d".formatted(requests.size()),
-				2048L);
+				2048L,
+				EFFORT);
 
 		return gateway.call(call, this::parse);
 	}

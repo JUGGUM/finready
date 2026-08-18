@@ -1,5 +1,6 @@
 package io.finready.ai;
 
+import com.anthropic.models.messages.OutputConfig;
 import io.finready.understanding.QuestionGenerator;
 import tools.jackson.databind.JsonNode;
 
@@ -18,9 +19,15 @@ import java.util.List;
  */
 class ClaudeQuestionGenerator implements QuestionGenerator {
 
-	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2) */
-	private static final String PROMPT_VERSION = "question-v1";
+	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2). v2: effort 명시 */
+	private static final String PROMPT_VERSION = "question-v2";
 	private static final String STAGE = "QUESTION_PHRASE";
+
+	/**
+	 * 검수 문항의 표현만 바꾸는 작업이라 추론이 거의 필요 없다. 실패해도 검수 원문으로
+	 * 대체되는 정상 경로가 있어서 여기서 아끼는 위험이 가장 작다.
+	 */
+	private static final OutputConfig.Effort EFFORT = OutputConfig.Effort.LOW;
 
 	private static final String SYSTEM_PROMPT = """
 			당신은 ELS 상담에서 고객의 이해를 확인하는 질문을 다듬는 도구다.
@@ -65,7 +72,8 @@ class ClaudeQuestionGenerator implements QuestionGenerator {
 				SYSTEM_PROMPT,
 				buildUserMessage(seeds),
 				"seeds=%d".formatted(seeds.size()),
-				2048L);
+				2048L,
+				EFFORT);
 
 		return gateway.call(call, this::parse);
 	}
