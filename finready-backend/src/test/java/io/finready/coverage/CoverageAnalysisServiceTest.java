@@ -93,10 +93,11 @@ class CoverageAnalysisServiceTest {
 					verdict("R01", CoverageStatus.EXPLAINED, "이 상품은 원금이 보장되지 않습니다."),
 					verdict("R02", CoverageStatus.EXPLAINED, "최대 손실률은 마이너스 100%입니다."),
 					verdict("R05", CoverageStatus.EXPLAINED, "조기상환은 6개월마다 평가합니다."));
-			// R05 는 WARN_ONLY 비-CONTRADICTED 라 Verifier 대상이 아니다
+			// R05 도 EXPLAINED 후보라 대상이다 — 안 돌리면 규칙 3 때문에 접힌다
 			verifierReturns(
 					relation("R01", SemanticRelation.SUPPORTS),
-					relation("R02", SemanticRelation.SUPPORTS));
+					relation("R02", SemanticRelation.SUPPORTS),
+					relation("R05", SemanticRelation.SUPPORTS));
 
 			CoverageResponse response = service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
 
@@ -113,8 +114,10 @@ class CoverageAnalysisServiceTest {
 					verdict("R01", CoverageStatus.EXPLAINED, "이 상품은 원금이 보장되지 않습니다."),
 					verdict("R02", CoverageStatus.NOT_FOUND, null),
 					verdict("R05", CoverageStatus.EXPLAINED, "조기상환은 6개월마다 평가합니다."));
-			// R02 는 인용이 없어 Verifier 대상에서 빠진다 — 물어볼 근거가 없다
-			verifierReturns(relation("R01", SemanticRelation.SUPPORTS));
+			// R02 는 인용이 없어 대상에서 빠진다 — 물어볼 근거가 없다. R01·R05 는 EXPLAINED 후보다
+			verifierReturns(
+					relation("R01", SemanticRelation.SUPPORTS),
+					relation("R05", SemanticRelation.SUPPORTS));
 
 			CoverageResponse response = service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
 
@@ -166,13 +169,42 @@ class CoverageAnalysisServiceTest {
 	@DisplayName("Verifier 대상 선정")
 	class VerifierScope {
 
+		/**
+		 * 계약 문구는 "GATE_REQUIRED + CONTRADICTED"지만 EXPLAINED 도 대상이다.
+		 * 규칙 3 때문에 EXPLAINED 는 SUPPORTS 없이 성립하지 않아서, 안 돌리면
+		 * 잘 설명한 WARN_ONLY Risk 가 INSUFFICIENT 로 접혀 경고로 둔갑한다.
+		 * 실측 근거: 2026-08-18 CONS_A_003 의 R06.
+		 */
 		@Test
-		@DisplayName("GATE_REQUIRED 는 대상이고 WARN_ONLY 비-CONTRADICTED 는 제외된다")
-		void gateRequiredOnly() {
+		@DisplayName("WARN_ONLY 라도 EXPLAINED 후보면 대상이다 — 안 돌리면 경고로 둔갑한다")
+		void explainedWarnOnlyIsIncluded() {
 			classifierReturns(
 					verdict("R01", CoverageStatus.EXPLAINED, "이 상품은 원금이 보장되지 않습니다."),
 					verdict("R02", CoverageStatus.EXPLAINED, "최대 손실률은 마이너스 100%입니다."),
 					verdict("R05", CoverageStatus.EXPLAINED, "조기상환은 6개월마다 평가합니다."));
+			verifierReturns(
+					relation("R01", SemanticRelation.SUPPORTS),
+					relation("R02", SemanticRelation.SUPPORTS),
+					relation("R05", SemanticRelation.SUPPORTS));
+
+			CoverageResponse response = service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
+
+			assertThat(capturedVerifierTargets())
+					.extracting(SemanticVerifier.VerificationRequest::riskId)
+					.containsExactly("R01", "R02", "R05");
+			// Verifier 를 돌렸으므로 EXPLAINED 가 살아남는다 — 접히지 않는다
+			assertThat(riskView(response, "R05").coverageStatus())
+					.isEqualTo(CoverageStatus.EXPLAINED);
+		}
+
+		@Test
+		@DisplayName("EXPLAINED 가 아니고 GATE_REQUIRED 도 아니면 제외된다")
+		void warnOnlyNonExplainedIsExcluded() {
+			classifierReturns(
+					verdict("R01", CoverageStatus.EXPLAINED, "이 상품은 원금이 보장되지 않습니다."),
+					verdict("R02", CoverageStatus.EXPLAINED, "최대 손실률은 마이너스 100%입니다."),
+					// 인용은 있지만 판정이 INSUFFICIENT — 의미 검증으로 뒤집힐 여지가 없다
+					verdict("R05", CoverageStatus.INSUFFICIENT, "조기상환은 6개월마다 평가합니다."));
 			verifierReturns(
 					relation("R01", SemanticRelation.SUPPORTS),
 					relation("R02", SemanticRelation.SUPPORTS));

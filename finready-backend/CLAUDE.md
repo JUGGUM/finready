@@ -297,14 +297,18 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   명확한 판정(R01·R04·R05·R07~R09)은 3회 안정. 무작위가 아니라 경계에 집중된 흔들림이다
 - **Gate 결과는 3회 모두 정확**했다. 개별 Risk가 어긋나도 제품 판단은 맞았다 —
   **평가 지표를 개별 Risk 정확도만으로 잡으면 이 사실이 안 보인다**
-- 미검증: **`CONS_A_003`(MISLEADING).** 지금까지 돌린 `CONS_A_001`은 누락 케이스라
-  이 제품의 핵심 주장("반대로 이해한 것을 잡아낸다")을 **전혀 검증하지 못했다**
+- **`CONS_A_003` 함정 검출 확인** — 오도 설명("노낙인이라 사실상 원금은 지켜진다")에서
+  R01을 `CONTRADICTED`로 판정하고 해당 문장을 정확히 인용했다. **2회 실행 결과 9개 Risk 전부 동일.**
+  라벨(`INSUFFICIENT`)보다 정확해서 **라벨을 `CONTRADICTED`로 정정**했다
+- **불안정성은 모델이 아니라 입력이 모호할 때 나타난다.** `CONS_A_003`은 완전히 안정적이고
+  `CONS_A_001`만 흔들렸다 — 후자는 "언급이 아예 없는" 항목이 많아 모델이 매번
+  "이 애매한 문장을 근거로 볼 것인가"를 다시 판단해야 했다
+- **레이턴시·비용은 출력 토큰에 비례한다.** EXPLAINED가 많을수록 인용문이 길어진다.
+  `CONS_A_001` classifier 10.8s / $0.019 vs `CONS_A_003` 14.3s / $0.030 —
+  **TRD §14 예산(12초) 충족 여부가 상담문 내용에 달렸다**
 
 ### 다음 순서
-0. **`CONS_A_003` 실행** — 오도 설명("노낙인이라 사실상 원금은 지켜진다")에서 R01을
-   EXPLAINED로 판정하면 안 된다. 제품의 핵심 주장을 검증하는 유일한 시나리오이며
-   아직 한 번도 안 돌렸다. 프롬프트를 더 손대기 전에 이것부터
-1. ~~F03 마무리 — LLM 구현체~~ **완료** (2026-08-18). 구현체 4개 + 프롬프트 튜닝 1차까지
+1. ~~F03~~ **완료** (2026-08-18). 파이프라인 + 구현체 4개 + 프롬프트 튜닝 + 실 LLM 검증(`CONS_A_001`·`CONS_A_003`)
    → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
    `com.anthropic:anthropic-java`, 설정은 `ai/AiProperties`(`finready.ai.*`)
    → **Sonnet 4.6은 structured outputs를 지원하지 않는다** (지원: Fable 5 / Opus 5 /
@@ -315,12 +319,12 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
    → `temperature: 0`은 4.6에서 유효하다. **Opus 4.7+ / Sonnet 5로 올리면 400이므로
    그때 지울 것**
    → prompt caching·effort 모두 적용 완료. 비용·레이턴시 실측은 위 "실측한 것" 참조
-   → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 지금은 계약대로
-   "GATE_REQUIRED + CONTRADICTED 후보 + provenance 통과"만 돌린다
-   (`CoverageAnalysisService.selectVerifierTargets`, 이 메서드 하나만 고치면 된다).
-   그러면 WARN_ONLY EXPLAINED가 semantic 없이 남아 규칙 3 때문에 INSUFFICIENT로 접힌다
-   (= 불필요한 경고). 대안은 EXPLAINED 후보 전체를 돌리는 것이고 토큰이 늘어난다. 상세는
-   `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
+   → **Verifier 대상은 계약 문구("GATE_REQUIRED + CONTRADICTED")보다 넓다** —
+   `EXPLAINED` 후보도 돌린다. 규칙 3 때문에 EXPLAINED는 `semantic = SUPPORTS` 없이
+   성립하지 않아서, 안 돌리면 잘 설명한 WARN_ONLY Risk가 INSUFFICIENT로 접혀 경고로 둔갑한다
+   (`CONS_A_003`의 R06에서 실측). `CoverageAnalysisServiceTest`가 이 동작을 고정하므로
+   **계약 문구만 보고 되돌리면 테스트가 깨진다.** 경위는
+   `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "해소됨"
 2. **F06 재설명 + F07 recheck·직원 처리**
    → F04/F05는 완료. `WorkflowStateMachine`·`NextActionResolver`·`UnderstandingWriter`가
    이미 있으니 그 위에 얹는다
@@ -361,8 +365,10 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 - **캐시 TTL을 5분에서 1시간으로 올릴지** — 심사처럼 세션이 띄엄띄엄 오면 5분 TTL은
   매번 쓰기(1.25배)만 물고 읽기 혜택이 없다. 1시간은 쓰기 2배지만 유지된다.
   배포 전 결정 (`docs/decisions/2026-08-18-coverage-prompt-tuning.md`)
-- **`CONS_A_001`의 R06 라벨** — 모델이 3회 일관되게 INSUFFICIENT인데 라벨은 EXPLAINED다.
-  모델이 맞을 가능성이 있다. 데이터셋 확충 때 함께 결정
+- ~~`CONS_A_001`의 R06 라벨~~ — **라벨이 아니라 코드 문제였다** (2026-08-18).
+  Verifier를 안 돌린 EXPLAINED가 규칙 3 때문에 접히던 것 → Verifier 대상에 EXPLAINED 추가로 해소
+- **`CONS_A_001`의 R02·R03 불안정** — 실행마다 뒤집힌다. 입력이 모호한 케이스의 한계로 보이며
+  프롬프트로 더 잡을 수 있을지 불확실하다. **Gate 결과는 3회 모두 정확했으므로 우선순위가 낮다**
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
 - **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없다 —

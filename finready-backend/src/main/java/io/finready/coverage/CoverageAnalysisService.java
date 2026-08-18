@@ -247,17 +247,24 @@ public class CoverageAnalysisService {
 	}
 
 	/**
-	 * Verifier 를 어떤 Risk 까지 돌릴지. <b>계약이 정한 범위를 그대로 구현한다</b> —
-	 * GATE_REQUIRED 전체 + CONTRADICTED 후보.
+	 * Verifier 를 어떤 Risk 까지 돌릴지.
 	 *
-	 * <p>근거가 원문 대조를 통과하지 못한 Risk 는 제외한다. 의미 판정의 입력이 될 인용 자체가
-	 * 없으므로 물어볼 것이 없고, 물어봤자 요금만 든다.
+	 * <p>계약 문구는 "GATE_REQUIRED + CONTRADICTED 후보"지만 <b>EXPLAINED 후보를 더한다.</b>
+	 * 규칙 3 때문에 EXPLAINED 는 {@code semantic = SUPPORTS} 없이는 성립할 수 없어서,
+	 * Verifier 를 안 돌린 EXPLAINED 는 {@link CoverageStatusResolver} 가 INSUFFICIENT 로 접는다.
+	 * 계약대로만 하면 <b>잘 설명한 WARN_ONLY Risk 가 경고로 둔갑한다.</b>
 	 *
-	 * <p><b>여기가 미결정 지점이다.</b> 이 범위대로면 잘 설명된 WARN_ONLY Risk 가 semantic 없이
-	 * 남아 규칙 3 때문에 INSUFFICIENT 로 접히고, 화면에 불필요한 경고가 뜬다. 대안은 EXPLAINED
-	 * 후보 전체를 돌리는 것이고 토큰이 늘어난다. LLM 모델·요금제와 함께 판단할 것 —
-	 * {@code docs/decisions/2026-08-18-explained-constraint-null-hole.md} "남은 질문".
-	 * 바꿀 때 고칠 곳은 이 메서드 하나다.
+	 * <p>실측으로 확인된 문제다 (2026-08-18, CONS_A_003):
+	 * <pre>
+	 * R06  classifierStatus EXPLAINED   ← 분류기는 정확했다 (라벨과 일치)
+	 *      semanticRelation null        ← WARN_ONLY 라 대상에서 빠짐
+	 *      coverageStatus   INSUFFICIENT ← 우리가 접었다
+	 * </pre>
+	 * 대상이 3개 → 4개로 늘 뿐이라 비용 증가는 미미하다. 자세한 경위는
+	 * {@code docs/decisions/2026-08-18-explained-constraint-null-hole.md}.
+	 *
+	 * <p>근거가 원문 대조를 통과하지 못한 Risk 는 여전히 제외한다. 의미 판정의 입력이 될
+	 * 인용 자체가 없으므로 물어볼 것이 없고, 물어봤자 요금만 든다.
 	 */
 	private List<SemanticVerifier.VerificationRequest> selectVerifierTargets(
 			List<ProductRisk> risks,
@@ -269,7 +276,9 @@ public class CoverageAnalysisService {
 			CoverageClassifier.RiskVerdict verdict = verdictsById.get(risk.getRiskId());
 
 			boolean inScope = risk.getCoveragePolicy() == CoveragePolicy.GATE_REQUIRED
-					|| verdict.status() == CoverageStatus.CONTRADICTED;
+					|| verdict.status() == CoverageStatus.CONTRADICTED
+					// EXPLAINED 는 semantic 없이 성립하지 않는다 (규칙 3)
+					|| verdict.status() == CoverageStatus.EXPLAINED;
 			if (!inScope || !provenanceById.get(risk.getRiskId()).valid()) {
 				continue;
 			}

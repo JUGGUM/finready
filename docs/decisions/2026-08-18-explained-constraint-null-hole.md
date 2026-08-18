@@ -63,19 +63,31 @@ Verifier 를 안 돌린 WARN_ONLY Risk 에서 **EXPLAINED + semantic NULL** 이 
 **결정: DB(규칙 3)를 따른다.** `CoverageStatusResolver.resolve` 가 마지막에 한 번 더
 접고, 그래도 빠져나온 값은 `CoverageResultFactory` 가 `IllegalStateException` 으로 막는다.
 
-### 남은 질문 (프론트·기획 확인 필요)
+### 해소됨 — (1) Verifier 대상 확대 (2026-08-18)
 
-WARN_ONLY Risk 가 제대로 설명됐는데도 Verifier 를 안 돌렸다는 이유로 INSUFFICIENT 가
-되면, 화면에 불필요한 경고가 뜬다. 선택지는 둘이다.
+**실측으로 결론이 났다.** `CONS_A_003` 실행에서 예상했던 문제가 그대로 나타났다:
 
-| 안 | 내용 | 비용 |
-|---|---|---|
-| (1) Verifier 대상 확대 | EXPLAINED 후보는 policy 와 무관하게 Verifier 를 돌린다 | LLM 호출 토큰 증가 — 모델 선정(D-02)과 함께 판단해야 한다 |
-| (2) 현행 유지 | WARN_ONLY EXPLAINED 는 INSUFFICIENT 로 표시 | 무료. 대신 경고가 과다해진다 |
+```
+R06  classifierStatus EXPLAINED    ← 분류기는 정확했다 (라벨과 일치)
+     semanticRelation null         ← WARN_ONLY 라 Verifier 대상에서 빠짐
+     coverageStatus   INSUFFICIENT ← CoverageStatusResolver 가 접었다
+     downgraded       true
+```
 
-**LLM 모델·요금제가 정해진 뒤에 결정한다.** 지금은 (2) 로 동작하며, 바꾸려면
-`CoverageAnalysisService` 의 Verifier 대상 선정만 고치면 된다 — 결정표와 팩토리는
-그대로 둘 수 있다.
+분류기가 맞게 판정한 것을 **우리 코드가 뒤집었다.** 잘 설명한 항목이 경고로 둔갑하며,
+심사에서 "설명했는데 왜 경고냐"는 질문을 받을 수 있는 지점이다.
+
+| 안 | 실측 근거 |
+|---|---|
+| **(1) Verifier 대상 확대 ← 채택** | 대상이 3개 → 4개. 세션당 비용 증가 미미(웜 캐시 $0.030 기준 한 자릿수 %) |
+| (2) 현행 유지 | 잘 설명한 WARN_ONLY 가 계속 경고로 뜬다 |
+
+착수 전에는 "토큰이 늘어난다"가 (1)의 비용이었는데, **실측 비용이 사전 추정의 1/5~1/8**로
+나와($5로 약 100세션) 이 비용이 판단을 좌우할 만큼 크지 않다는 것이 확인됐다.
+
+구현: `CoverageAnalysisService.selectVerifierTargets` 에 `EXPLAINED` 조건 추가.
+`CoverageAnalysisServiceTest` 가 이 동작을 고정한다 — **계약 문구("GATE_REQUIRED +
+CONTRADICTED")만 보고 되돌리면 테스트가 깨진다.**
 
 ## 어떻게 고쳤나
 
