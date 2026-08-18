@@ -205,6 +205,28 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   스키마로 `ddl-auto: validate` 통과, ② `audit_event` INSERT 성공 / UPDATE는
   `[23001]`로 트리거가 차단 — 둘 다 지금까지 로컬 기동으로 수기 확인했던 것을
   CI 회귀로 전환. F03 리포지토리·서비스 코드는 아직 없음, 이건 인프라만 (2026-08-14)
+- **`revisionNo` 경쟁 상태 — (1)안 적용** (`docs/decisions/2026-08-14-...`). 경쟁 자체는
+  그대로 두고 실패의 모양만 고쳤다: `uq_revision` 위반이 500 `INTERNAL_ERROR`(재시도 불가)로
+  나가던 것을 409 `CONCURRENT_SESSION_UPDATE`(recoverable)로. **제약 위반을 뭉뚱그리지
+  않는다** — `ck_*` 위반은 애플리케이션이 DB 규칙을 우회했다는 뜻이라 500으로 남긴다.
+  제약 이름 추출은 `common/ConstraintNames`(JPA는 Hibernate 예외, JdbcTemplate은 메시지 폴백).
+  `RevisionConcurrencyIntegrationTest`가 실 Postgres로 재현 (2026-08-18)
+- **F03 Coverage 코어 (LLM 비의존 부분)** — 모델 선정(D-02)을 기다리지 않아도 되는 것만 먼저.
+  `OffsetMapper`(정규화↔원문 UTF-16 인덱스 맵, 규칙 4의 재계산 지점) /
+  `ProvenanceVerifier`(EMPTY·TOO_SHORT·TOO_LONG·NOT_FOUND·AMBIGUOUS) /
+  `CoverageStatusResolver`(openapi 결정표) / `CoverageResultFactory`(엔티티 생성자를
+  직접 부르지 않게 하는 유일한 경로) / `GateEvaluator`+`GateStatus` /
+  `CoverageClassifier`(포트만, 구현체 없음). 컨트롤러·서비스·리포지토리는 아직 없다 (2026-08-18)
+- **`ck_explained_requires_verification`의 NULL 구멍 수정 (V3)** —
+  `semantic_relation IS NULL`인 EXPLAINED를 막지 못하고 있었다. Postgres CHECK는 결과가
+  FALSE일 때만 거부하는데 `NULL = 'SUPPORTS'`가 NULL이라 제약 전체가 NULL로 평가됐다.
+  **규칙 3의 "DB check 제약으로도 강제돼 있다"가 이 경우 사실이 아니었다.**
+  `is not distinct from`으로 교체. 경위는 `docs/decisions/2026-08-18-explained-constraint-null-hole.md`
+  (2026-08-18)
+- **평가 데이터셋 `CONS_A_002`~`006` 본문 작성** — 라벨(`coverageGroundTruth`)에 맞춰
+  9개 Risk의 `fact` 요소를 넣고 뺐다. `DemoSeedGateConsistencyTest`가 라벨 ↔
+  `expectedGateResult`를 `GateEvaluator`로 재계산해 대조한다 — 시나리오가 60건까지
+  늘어날 때 사람 눈으로는 유지되지 않는 검증이다 (2026-08-18)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -232,12 +254,19 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   해당 필터가 실제로 걸러낸 적이 없다
 
 ### 다음 순서
-1. **Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)**
-   → `CoverageResult` 생성자는 ck_provenance_consistency /
-   ck_explained_requires_verification 조합을 강제하지 않는다. Verifier에서 팩토리로 막을 것
-   → Testcontainers 인프라는 이미 있다(`AbstractPostgresIntegrationTest`, 위 "테스트 전략").
-   여기서는 `ck_*`·append-only 등 F03 고유 케이스를 그 위에 추가하면 된다
-   → 시작 전 LLM 모델·요금제를 정해야 한다 (미결정, TRD D-02)
+1. **F03 나머지 — LLM 연동부**
+   → 코어(OffsetMapper·ProvenanceVerifier·CoverageStatusResolver·CoverageResultFactory·
+   GateEvaluator)와 DB 제약 검증은 **완료**됐다. `CoverageResult` 생성자를 직접 부르지 말고
+   항상 `CoverageResultFactory`를 통할 것
+   → 남은 것: `CoverageClassifier` 구현체, Evidence Semantic Verifier(LLM),
+   `CoverageAnalysisService`, `CoverageResultRepository`, `POST /sessions/{id}/coverage`,
+   `POST /sessions/{id}/gate-override`(+ `GateOverrideRepository`)
+   → **여전히 LLM 모델·요금제를 먼저 정해야 한다** (미결정, TRD D-02)
+   → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 계약은 "GATE_REQUIRED +
+   CONTRADICTED 후보"라고 적었지만, 그러면 WARN_ONLY EXPLAINED가 semantic 없이 남아
+   규칙 3 때문에 INSUFFICIENT로 접힌다(= 불필요한 경고). 대안은 EXPLAINED 후보 전체를
+   돌리는 것이고 토큰이 늘어난다. 상세는
+   `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
 2. Understanding / 재설명 / Staff Resolution (F04~F07)
    → `RiskWorkflowState`에 상태 전이 메서드가 아직 없다. 갱신은 understanding 모듈에서
    일원화하라는 TRD §4.2대로 그때 설계할 것
@@ -258,7 +287,9 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 > §3.4 검증 5항목이 모두 끝났다. 다음 순서 1번부터는 Step 2다.
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
-- 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
+- 상담 시나리오 6 / 목표 60 — **6건 모두 본문 작성 완료** (2026-08-18).
+  `DemoSeedGateConsistencyTest`가 라벨↔기대 Gate 정합성을 자동 검증하므로
+  시나리오를 추가할 때 라벨만 맞으면 어긋남이 바로 걸린다
 - 고객 답변 12 / 목표 180
 - 라벨을 먼저 정하고 상담문을 생성하는 방식. 사후 라벨링 비용이 0이다
 
@@ -281,9 +312,14 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 ## 알려진 문제
 
 - **`revisionNo` 채번 경쟁 상태** — `docs/decisions/2026-08-14-revision-no-race-condition.md`.
-  수정 보류(의도적). P0가 단일 사용자 데모라 실질 위험이 낮다는 판단.
-  동시 요청 시 `uq_revision` 위반이 500으로 나간다. 고칠 때는 409
-  `CONCURRENT_SESSION_UPDATE`(recoverable) 매핑이 가장 싸다
+  **경쟁 자체는 여전히 남아 있다**(의도적 보류. P0가 단일 사용자 데모라 실질 위험이 낮다).
+  다만 (1)안을 적용해 실패가 409 `CONCURRENT_SESSION_UPDATE`(recoverable)로 나가므로
+  프론트가 재시도할 수 있다. 근본 해결(재시도 루프·행 락·DB 채번)은 결정 문서의
+  "위험이 현실화되는 조건"에 해당할 때 재검토
+- **Verifier 대상 범위 미정** — WARN_ONLY Risk가 잘 설명됐어도 semantic 검증을 안 돌리면
+  규칙 3 때문에 INSUFFICIENT로 접혀 불필요한 경고가 뜬다. 계약 결정표와 DB 제약이
+  어긋나는 지점이며 LLM 모델 결정과 함께 판단해야 한다.
+  `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
 
 ## 처리 대기 (문서 동기화)
 
