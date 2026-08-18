@@ -278,10 +278,33 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 - 미검증 경로: 시드에 `NOT_APPLICABLE` Risk가 없어 `ProductQueryService`의
   해당 필터가 실제로 걸러낸 적이 없다
 
+### 실측한 것 (2026-08-18, 실 LLM 호출)
+
+상세는 `docs/decisions/2026-08-18-coverage-prompt-tuning.md`. **다시 헤매지 않으려면
+프롬프트를 손대기 전에 그 문서부터 볼 것.**
+
+- **비용**: Coverage 2호출 웜 캐시 **$0.019** / 콜드 $0.035. 세션 전체 추정 ~$0.047 →
+  **$5 크레딧으로 약 100세션.** 착수 전 추정($0.2~0.4)이 자릿수로 틀렸다 — 한국어 토큰을
+  과대평가했다(실측 대략 1글자=1토큰). **실험을 아낄 이유가 없다**
+- **캐시 작동 확인**: `cacheWrite=2969 → cacheRead=2969` 완전 적중. 44% 절감.
+  Risk 카탈로그를 정렬 순서로 system에 둔 설계가 유효하다.
+  ⚠️ **기본 TTL 5분** — 심사처럼 띄엄띄엄 오면 매번 쓰기만 물 수 있다(배포 전 결정)
+- **웜 상태 비용의 70%가 출력 토큰**이다. 입력은 캐시로 거의 사라졌고, 줄일 곳은 evidence 인용문이다
+- **레이턴시**: 웜에서 classifier 10.8s(TRD §14 예산 12s 충족), 합계 15.5s.
+  단 **실행 간 편차가 프롬프트 효과보다 크다**(같은 프롬프트로 verifier 5.0~12.0s).
+  **n=1로 레이턴시를 판단하지 말 것** — 이 함정에 한 번 빠져 잘못된 원인 진단을 했다
+- **판정 안정성**: `temperature: 0`인데도 **경계 케이스는 실행마다 바뀐다**(R02·R03).
+  명확한 판정(R01·R04·R05·R07~R09)은 3회 안정. 무작위가 아니라 경계에 집중된 흔들림이다
+- **Gate 결과는 3회 모두 정확**했다. 개별 Risk가 어긋나도 제품 판단은 맞았다 —
+  **평가 지표를 개별 Risk 정확도만으로 잡으면 이 사실이 안 보인다**
+- 미검증: **`CONS_A_003`(MISLEADING).** 지금까지 돌린 `CONS_A_001`은 누락 케이스라
+  이 제품의 핵심 주장("반대로 이해한 것을 잡아낸다")을 **전혀 검증하지 못했다**
+
 ### 다음 순서
-1. **F03 마무리 — LLM 구현체 2개뿐**
-   → 파이프라인은 **완료**됐다. `CoverageClassifier`·`SemanticVerifier` 구현체를
-   `@Component`로 추가하면 `AiPortConfig`의 스텁이 자동으로 물러난다. 그 외에 고칠 코드는 없다
+0. **`CONS_A_003` 실행** — 오도 설명("노낙인이라 사실상 원금은 지켜진다")에서 R01을
+   EXPLAINED로 판정하면 안 된다. 제품의 핵심 주장을 검증하는 유일한 시나리오이며
+   아직 한 번도 안 돌렸다. 프롬프트를 더 손대기 전에 이것부터
+1. ~~F03 마무리 — LLM 구현체~~ **완료** (2026-08-18). 구현체 4개 + 프롬프트 튜닝 1차까지
    → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
    `com.anthropic:anthropic-java`, 설정은 `ai/AiProperties`(`finready.ai.*`)
    → **Sonnet 4.6은 structured outputs를 지원하지 않는다** (지원: Fable 5 / Opus 5 /
@@ -291,11 +314,7 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
    `AI_PARSING_FAILED`를 던지므로 구조는 그대로 쓴다
    → `temperature: 0`은 4.6에서 유효하다. **Opus 4.7+ / Sonnet 5로 올리면 400이므로
    그때 지울 것**
-   → **$5 크레딧이다.** 세션당 LLM 호출이 6~9회(분류1+Verifier1+질문1+판정3~6)라
-   대략 십몇~스무 세션 규모다. 개발 중 반복 실행 + 심사 5일치가 여기 다 들어간다.
-   **prompt caching을 처음부터 넣을 것** — Risk 9건의 `fact`와 시스템 프롬프트가 전 세션
-   공통이라 캐시 prefix로 맞고, 캐시 읽기는 ~0.1배다. 나중에 붙이면 프롬프트를 다시 짜야 한다.
-   `effort`도 레버다(4.6 기본 `high`, 분류는 `medium`/`low`로 충분할 가능성)
+   → prompt caching·effort 모두 적용 완료. 비용·레이턴시 실측은 위 "실측한 것" 참조
    → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 지금은 계약대로
    "GATE_REQUIRED + CONTRADICTED 후보 + provenance 통과"만 돌린다
    (`CoverageAnalysisService.selectVerifierTargets`, 이 메서드 하나만 고치면 된다).
@@ -337,8 +356,13 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 
 ## 미결정
 
-- ~~LLM 모델·요금제~~ — **`claude-sonnet-4-6` 결정** (2026-08-18). $5 크레딧이라 quota가
-  빠듯하다 — prompt caching과 effort 조절이 필수다
+- ~~LLM 모델·요금제~~ — **`claude-sonnet-4-6` 결정** (2026-08-18).
+  실측 결과 $5로 약 100세션 — **quota는 빠듯하지 않다**(위 "실측한 것")
+- **캐시 TTL을 5분에서 1시간으로 올릴지** — 심사처럼 세션이 띄엄띄엄 오면 5분 TTL은
+  매번 쓰기(1.25배)만 물고 읽기 혜택이 없다. 1시간은 쓰기 2배지만 유지된다.
+  배포 전 결정 (`docs/decisions/2026-08-18-coverage-prompt-tuning.md`)
+- **`CONS_A_001`의 R06 라벨** — 모델이 3회 일관되게 INSUFFICIENT인데 라벨은 EXPLAINED다.
+  모델이 맞을 가능성이 있다. 데이터셋 확충 때 함께 결정
 - Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
 - **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없다 —
