@@ -28,14 +28,22 @@ class SchemaConstraintIntegrationTest extends AbstractPostgresIntegrationTest {
 	private JdbcTemplate jdbcTemplate;
 
 	@Test
-	@DisplayName("Flyway V1+V2가 적용된 스키마로 ddl-auto: validate가 통과한다")
+	@DisplayName("맨바닥에서 Flyway 전체가 적용되고 ddl-auto: validate가 통과한다")
 	void contextLoadsAgainstRealSchema() {
+		// 이 테스트가 도는 것 자체가 validate 통과다 — 불일치가 있으면 컨텍스트 기동에서 터진다.
+		// 여기서는 마이그레이션이 하나도 실패하지 않았는지만 본다.
+		//
+		// 개수를 상수로 박지 않는다. 마이그레이션이 늘 때마다 무관한 테스트가 깨지고,
+		// 그러면 숫자만 올려 통과시키게 되어 검증이 형식만 남는다.
+		Long failed = jdbcTemplate.queryForObject(
+				"select count(*) from flyway_schema_history where success = false", Long.class);
+		assertThat(failed).isZero();
+
 		// version is null인 행은 Flyway가 finready 스키마를 새로 만들 때 남기는
 		// "<< Flyway Schema Creation >>" pseudo row다. 실제 마이그레이션만 센다.
-		Long historyCount = jdbcTemplate.queryForObject(
-				"select count(*) from flyway_schema_history where success = true and version is not null",
-				Long.class);
-		assertThat(historyCount).isEqualTo(2);
+		Long applied = jdbcTemplate.queryForObject(
+				"select count(*) from flyway_schema_history where version is not null", Long.class);
+		assertThat(applied).isGreaterThanOrEqualTo(3);
 	}
 
 	@Test
