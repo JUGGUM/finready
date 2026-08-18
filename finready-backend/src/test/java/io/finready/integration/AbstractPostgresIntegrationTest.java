@@ -5,8 +5,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
@@ -17,18 +15,23 @@ import org.testcontainers.utility.DockerImageName;
  * 컨테이너 실접속 정보로 덮어써서, 같은 {@code test} 프로파일 안에서 통합 테스트만
  * 실제 DB를 쓰게 한다 — 별도 프로파일 파일을 만들 필요가 없다.
  *
- * <p>컨테이너는 클래스당 하나(static)라 상속 트리 전체가 같은 인스턴스를 공유한다.
- * 테스트 간 데이터 격리가 필요하면 각 테스트에서 직접 정리할 것 — Flyway는
- * 스키마만 만들고 clean은 하지 않는다.
+ * <p><b>싱글턴 컨테이너 패턴이다.</b> {@code @Testcontainers} + {@code @Container} 를 쓰면
+ * JUnit 확장이 <b>테스트 클래스마다</b> 컨테이너를 stop 한다. 반면 Spring 은 같은 설정의
+ * 애플리케이션 컨텍스트를 클래스 사이에 캐시해 재사용하므로, 먼저 끝난 클래스가 컨테이너를
+ * 내리면 뒤 클래스는 살아 있는 컨텍스트로 <b>죽은 컨테이너</b>에 붙어 connection refused 로
+ * 터진다. 그래서 여기서는 static 초기화로 한 번만 띄우고 stop 하지 않는다 —
+ * 정리는 Testcontainers 의 Ryuk 컨테이너가 JVM 종료 후 맡는다.
  */
-@Testcontainers
 @Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 public abstract class AbstractPostgresIntegrationTest {
 
-	@Container
 	static final PostgreSQLContainer<?> POSTGRES =
 			new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
+
+	static {
+		POSTGRES.start();
+	}
 
 	@DynamicPropertySource
 	static void datasourceProperties(DynamicPropertyRegistry registry) {
