@@ -216,7 +216,7 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   `ProvenanceVerifier`(EMPTY·TOO_SHORT·TOO_LONG·NOT_FOUND·AMBIGUOUS) /
   `CoverageStatusResolver`(openapi 결정표) / `CoverageResultFactory`(엔티티 생성자를
   직접 부르지 않게 하는 유일한 경로) / `GateEvaluator`+`GateStatus` /
-  `CoverageClassifier`(포트만, 구현체 없음). 컨트롤러·서비스·리포지토리는 아직 없다 (2026-08-18)
+  `CoverageClassifier`(포트만, 구현체 없음) (2026-08-18)
 - **`ck_explained_requires_verification`의 NULL 구멍 수정 (V3)** —
   `semantic_relation IS NULL`인 EXPLAINED를 막지 못하고 있었다. Postgres CHECK는 결과가
   FALSE일 때만 거부하는데 `NULL = 'SUPPORTS'`가 NULL이라 제약 전체가 NULL로 평가됐다.
@@ -227,6 +227,17 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   9개 Risk의 `fact` 요소를 넣고 뺐다. `DemoSeedGateConsistencyTest`가 라벨 ↔
   `expectedGateResult`를 `GateEvaluator`로 재계산해 대조한다 — 시나리오가 60건까지
   늘어날 때 사람 눈으로는 유지되지 않는 검증이다 (2026-08-18)
+- **F03 파이프라인 (LLM 무관 부분 전체)** — `CoverageAnalysisService` /
+  `CoverageWriter` / `CoverageController`(`POST /sessions/{id}/coverage`,
+  `POST /sessions/{id}/gate-override`) / `CoverageResponse` /
+  `CoverageResultRepository`·`GateOverrideRepository` / `SemanticVerifier` 포트.
+  **규칙 6 때문에 서비스에 `@Transactional`이 없다** — 읽기 → LLM 호출(트랜잭션 밖) → 쓰기이고,
+  쓰기만 `CoverageWriter`가 묶는다. 같은 클래스 안에서 `@Transactional` 메서드를 자기 호출하면
+  프록시를 안 타 트랜잭션이 아예 안 걸리므로 별도 빈으로 뺐다.
+  멱등: 같은 revision에 결과가 있으면 LLM을 다시 부르지 않는다(새로고침이 요금을 다시 물지 않게).
+  `ai/AiPortConfig`가 `@ConditionalOnMissingBean` 스텁을 등록해 **LLM 없이도 기동**하되,
+  호출되면 설정 누락을 명시적으로 알린다 — 빈 결과를 돌려주면 전 Risk가 "설명 안 됨"으로
+  읽혀 Gate가 잠긴다 (2026-08-18)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -254,18 +265,19 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   해당 필터가 실제로 걸러낸 적이 없다
 
 ### 다음 순서
-1. **F03 나머지 — LLM 연동부**
-   → 코어(OffsetMapper·ProvenanceVerifier·CoverageStatusResolver·CoverageResultFactory·
-   GateEvaluator)와 DB 제약 검증은 **완료**됐다. `CoverageResult` 생성자를 직접 부르지 말고
-   항상 `CoverageResultFactory`를 통할 것
-   → 남은 것: `CoverageClassifier` 구현체, Evidence Semantic Verifier(LLM),
-   `CoverageAnalysisService`, `CoverageResultRepository`, `POST /sessions/{id}/coverage`,
-   `POST /sessions/{id}/gate-override`(+ `GateOverrideRepository`)
-   → **여전히 LLM 모델·요금제를 먼저 정해야 한다** (미결정, TRD D-02)
-   → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 계약은 "GATE_REQUIRED +
-   CONTRADICTED 후보"라고 적었지만, 그러면 WARN_ONLY EXPLAINED가 semantic 없이 남아
-   규칙 3 때문에 INSUFFICIENT로 접힌다(= 불필요한 경고). 대안은 EXPLAINED 후보 전체를
-   돌리는 것이고 토큰이 늘어난다. 상세는
+1. **F03 마무리 — LLM 구현체 2개뿐**
+   → 파이프라인은 **완료**됐다. `CoverageClassifier`·`SemanticVerifier` 구현체를
+   `@Component`로 추가하면 `AiPortConfig`의 스텁이 자동으로 물러난다. 그 외에 고칠 코드는 없다
+   → **LLM 모델·요금제 결정이 선행** (미결정, TRD D-02).
+   잠정 후보는 Claude Sonnet 5 — structured outputs(`output_config.format` + `json_schema`의
+   `enum`)로 "enum 밖 값 = 파싱 실패"(규칙 9)를 API 계층에서 강제할 수 있다.
+   **`application.yaml`의 `finready.ai.temperature`는 그때 제거할 것** — Sonnet 5는
+   비기본값 sampling 파라미터를 400으로 거부한다
+   → 착수 시 결정할 것: **Verifier를 어떤 Risk까지 돌릴지.** 지금은 계약대로
+   "GATE_REQUIRED + CONTRADICTED 후보 + provenance 통과"만 돌린다
+   (`CoverageAnalysisService.selectVerifierTargets`, 이 메서드 하나만 고치면 된다).
+   그러면 WARN_ONLY EXPLAINED가 semantic 없이 남아 규칙 3 때문에 INSUFFICIENT로 접힌다
+   (= 불필요한 경고). 대안은 EXPLAINED 후보 전체를 돌리는 것이고 토큰이 늘어난다. 상세는
    `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
 2. Understanding / 재설명 / Staff Resolution (F04~F07)
    → `RiskWorkflowState`에 상태 전이 메서드가 아직 없다. 갱신은 understanding 모듈에서
@@ -275,7 +287,8 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 4. 오프라인 평가 모듈 + Rule baseline
 
 리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·
-`consultation_revision` 5개만 있다. 나머지는 해당 기능 작업에서 만든다.
+`consultation_revision`·`coverage_result`·`gate_override` 7개가 있다.
+나머지(understanding·explanation·audit·ai 계열)는 해당 기능 작업에서 만든다.
 
 > **병행(배포 연동)**: F01이 생겨 프론트가 붙을 수 있다. 프론트에 배포 URL 전달 →
 > 프론트 `NEXT_PUBLIC_API_BASE_URL=https://finready-backend.onrender.com/api`,
