@@ -23,17 +23,20 @@ class UnderstandingWriter {
 	private final SessionQuestionRepository questionRepository;
 	private final UnderstandingResultRepository resultRepository;
 	private final RiskWorkflowStateRepository workflowStateRepository;
+	private final StaffResolutionRepository staffResolutionRepository;
 	private final StateMachine stateMachine;
 
 	UnderstandingWriter(ConsultationSessionRepository sessionRepository,
 	                    SessionQuestionRepository questionRepository,
 	                    UnderstandingResultRepository resultRepository,
 	                    RiskWorkflowStateRepository workflowStateRepository,
+	                    StaffResolutionRepository staffResolutionRepository,
 	                    StateMachine stateMachine) {
 		this.sessionRepository = sessionRepository;
 		this.questionRepository = questionRepository;
 		this.resultRepository = resultRepository;
 		this.workflowStateRepository = workflowStateRepository;
+		this.staffResolutionRepository = staffResolutionRepository;
 		this.stateMachine = stateMachine;
 	}
 
@@ -66,6 +69,35 @@ class UnderstandingWriter {
 		if (recheckQuestion != null) {
 			questionRepository.save(recheckQuestion);
 		}
+		return understandingFinished
+				? moveTo(sessionId, SessionStatus.AWAITING_STAFF_REVIEW)
+				: currentStatusOf(sessionId);
+	}
+
+	/**
+	 * F06 — 재설명 응답에 실을 후속 질문만 저장한다.
+	 *
+	 * <p>워크플로 전이가 없다. 재설명 시점의 Risk 는 이미 IN_PROGRESS 이며,
+	 * 다음 전이는 attempt 2 답변({@code /recheck})에서 일어난다.
+	 */
+	@Transactional
+	void saveRecheckQuestion(SessionQuestion recheckQuestion) {
+		questionRepository.save(recheckQuestion);
+	}
+
+	/**
+	 * F07 — 직원 처리 저장 + workflow 를 COMPLETE 로.
+	 *
+	 * <p>{@code understanding_result} 를 건드리지 않는다(규칙 1). 여기서 UPDATE 가 한 줄이라도
+	 * 생기면 AI 원판정이 사라진다.
+	 */
+	@Transactional
+	SessionStatus saveStaffResolution(String sessionId,
+	                                  StaffResolution resolution,
+	                                  RiskWorkflowState workflowState,
+	                                  boolean understandingFinished) {
+		staffResolutionRepository.save(resolution);
+		workflowStateRepository.save(workflowState);
 		return understandingFinished
 				? moveTo(sessionId, SessionStatus.AWAITING_STAFF_REVIEW)
 				: currentStatusOf(sessionId);

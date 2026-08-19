@@ -66,6 +66,14 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   워커 명령줄의 `-Dfile.encoding=UTF-8`은 argfile을 읽은 뒤 적용돼 소용없다.
   이 문제로 `D:\공부\finready` → `D:\dev\finready`로 옮겼다 (2026-08-14).
   F03의 Testcontainers도 Docker 볼륨 마운트에서 같은 계열 문제를 겪는다.
+- **한글이 든 `.ps1`은 반드시 UTF-8 *with BOM*으로 저장할 것.** Windows PowerShell 5.1은
+  BOM이 없으면 스크립트를 ANSI 코드페이지(여기선 cp949)로 읽는다. 한글의 마지막 UTF-8
+  바이트가 cp949 선행 바이트인 경우(예: `대조`의 `B0`) **뒤따르는 LF 개행을 삼켜서
+  다음 줄이 위 주석에 흡수된다.** 문법 오류가 아니라 **문장이 조용히 사라진다.**
+  `tools/run-coverage-eval.ps1`에서 `$groundTruth`·`$gateExpected` 두 대입문이 이렇게
+  없어져 평가 결과가 전부 불일치로 찍혔다 (2026-08-19).
+  CRLF 파일은 `\r`이 대신 먹혀서 안 걸린다 — **LF 파일에서만 터진다.**
+  앞의 argfile 문제와 같은 계열(UTF-8로 쓰고 cp949로 읽음)이다.
 - **로컬 실행 전 JAVA_HOME을 JDK 25로 잡을 것.** 셸 기본값이 존재하지 않는
   openjdk@17 경로라 gradlew가 즉시 죽는다.
   ```bash
@@ -252,6 +260,27 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   그래서 `QuestionGenerator` 스텁만 예외적으로 빈 결과를 돌려준다(던지면 F04를 못 돌려본다)
   · Override로 제외된 Risk도 `COMPLETE/SKIPPED_BY_OVERRIDE`로 기록한다 — 리포트에서
   "왜 안 물었나"가 보여야 한다 (2026-08-18)
+- **F06 재설명 + F07 recheck·직원 처리** — `POST /sessions/{id}/reexplain`,
+  `POST /sessions/{id}/recheck`, `POST /sessions/{id}/risks/{riskId}/staff-resolution`.
+  · **F07은 거의 공짜였다** — `judge(...)`가 이미 attempt를 인자로 받아서
+  `submitRecheckAnswer`가 `RECHECK_ATTEMPT`로 부르기만 하면 됐다. 설계가 값을 한 셈이다
+  · `explanation/Guardrail` — TRD D-04 해소. **금칙어 목록 방식**(LLM 자가검증 아님).
+  결정적이라 테스트로 고정되고 실행마다 흔들리지 않는다 — Coverage 실측에서 경계 판정이
+  실행마다 뒤집히는 걸 봤으므로 그 성질을 안전장치에 넣지 않았다
+  · **부정형 예외가 이 클래스의 핵심이다.** "보장"·"확정"·"안전"을 단순 `contains`로 막으면
+  **맞는 설명이 걸린다** — 이 상품의 검수된 사실 자체가 부정형이다("원금이 보장되지 않습니다").
+  그대로 구현했다면 가장 정확한 재설명이 매번 fallback으로 떨어졌을 것이다. 같은 절 안에서만
+  부정어를 찾는다 — 절 경계를 안 끊으면 뒷문장 "없"이 앞문장 "보장"을 면제해 위반을 놓친다
+  · 숫자는 **값으로 비교**한다(`BigDecimal.stripTrailingZeros`). 문자열 비교면 `0.80` vs `0.8`
+  처럼 표기만 다른 정확한 숫자가 "지어낸 숫자"로 걸린다
+  · 재설명은 **멱등**하다 — 이미 있으면 LLM을 다시 부르지 않는다(Coverage와 같은 이유).
+  `re_explanation`에는 unique 제약이 없어(§4.2 append 정책) 애플리케이션이 조회로 판단한다
+  · 진입 조건 확인(`requireMisunderstoodAnswer`)과 후속 질문 발급(`issueRecheckQuestion`)은
+  **understanding 모듈에 뒀다.** explanation이 직접 `session_question`을 쓰면 발급 규칙과
+  멱등성이 두 곳이 된다(TRD §4.2·§4.6)
+  · 직원 처리는 `ai_status`를 건드리지 않는다(규칙 1). `StaffResolutionHandling` 테스트가
+  `resultRepository.save`가 호출되지 않음을 고정한다
+  · 신규 테스트 38건 (Guardrail 15 / ReExplanation 12 / F07 11). 전체 268 + 18 통과 (2026-08-19)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -307,6 +336,49 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   `CONS_A_001` classifier 10.8s / $0.019 vs `CONS_A_003` 14.3s / $0.030 —
   **TRD §14 예산(12초) 충족 여부가 상담문 내용에 달렸다**
 
+### 실측한 것 (2026-08-19, `CONS_A_002`·`004`·`005`)
+
+`tools/run-coverage-eval.ps1`로 일괄 실행. 상세는 위 결정 문서.
+
+- **Risk 25/27, Gate 3/3.** `002` 9/9 · `004` 7/9 · `005` 9/9
+- **`CONS_A_005` 키워드 함정 9/9 통과** — "조기상환 조건은 투자설명서에 다 나와 있고"처럼
+  단어만 있고 설명이 없는 문장에서 INSUFFICIENT를 냈다.
+  **단순 키워드 매칭이 실패하는 지점을 통과한다는 유일한 실증이다**
+- **`CONS_A_002`에서 Gate가 처음 열렸다** — `001`·`003`은 모두 BLOCKED라 통과 경로가
+  실제로 동작한 적이 없었다
+- **Verifier 대상 확대가 7건으로 뒷받침됐다** — WARN_ONLY+EXPLAINED가 전부 `SUPPORTS`.
+  확대 전이었다면 `CONS_A_002`는 **완벽한 상담인데 경고 3개**가 떴다
+- **어긋난 2건은 둘 다 `CONS_A_004`이고 Gate 영향 없음.** R02는 NOT_FOUND/INSUFFICIENT
+  경계(둘 다 Gate를 막아 동작 동일), **R09는 모델 오류** — 다요소 fact를 근거 인용
+  하나로 판정하기 불리하다는 가설(미검증)
+- ⚠️ **레이턴시가 세 건 모두 12초 예산 초과** — classifier 15.1~23.3s, wall 23.0~33.2s.
+  `CONS_A_002`의 23.3s는 30초 한도에 여유가 6.7초인데 그 상담문은 1,400자이고
+  **계약 상한은 8,000자**다. → **`timeout-seconds` 30 → 60 으로 올렸다**(실패 모양만 변경).
+  근본 해결인 classifier 배치 병렬화는 **항목 간 경계 규칙이 나빠질 위험**이 있어
+  재측정이 필요하므로 F06~F08 이후로 미뤘다
+- **프론트에 실측 33초를 전달해야 한다** — fetch 타임아웃·대기 화면 기준값
+
+### 실측한 것 (2026-08-19, F04~F07 전 구간 실 LLM)
+
+`tools/run-understanding-eval.ps1` — `CONS_A_002`로 1회. **검증 19/19 통과.**
+Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
+
+- **부정형 예외가 실전에서 작동했다.** R01 재설명이 *"'원금이 보장되지 않는다'고 명시"*로
+  나왔고 통과했다(`retried=false`). 단순 `contains`였다면 fallback으로 떨어졌을 문장이다
+- **Guardrail이 한 번 걸리고 한 번 통과했다.** R02 1차 `UNSUPPORTED_NUMBER` → 재생성 통과.
+  2차 본문은 `50%` 대신 "절반"이라는 **단어**로 바꿨다 — 재생성이 실제로 교정한다.
+  **너무 빡빡하지도 느슨하지도 않다는 첫 신호지만 n=2다**
+- ⚠️ **F04~F07 세 단계는 prompt caching이 전혀 안 붙는다** — `cacheWrite=0`.
+  시스템 프롬프트가 **Sonnet 4.6의 1024토큰 최소치 미만**이다. 오류 없이 조용히 안 걸리므로
+  `cacheWrite=0`이 유일한 신호다(`logUsage`를 넣어둔 값을 했다).
+  **고치지 말 것** — 캐시 태우려고 프롬프트를 늘리면 호출당 $0.003 아끼자고 매번 입력을 늘린다
+- **레이턴시는 Coverage만 문제다.** QUESTION_PHRASE 3s / ANSWER_JUDGE 2~5s /
+  RE_EXPLANATION 4~6s(재생성 시 11s). 전부 예산 안이다. classifier 23s만 튄다
+- **비용 정정: 세션당 ~$0.11**(콜드, Risk 2건 처리 기준) → **$5로 약 45세션.**
+  앞의 "$0.047 / 100세션"은 **F03만** 계산한 값이었다
+- `QuestionsResponse`의 필드명은 `generationSource`가 아니라 **`source`**다(계약과 일치).
+  평가 스크립트가 이걸 잘못 읽어 빈 값이 찍혔던 적이 있다
+
 ### 다음 순서
 1. ~~F03~~ **완료** (2026-08-18). 파이프라인 + 구현체 4개 + 프롬프트 튜닝 + 실 LLM 검증(`CONS_A_001`·`CONS_A_003`)
    → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
@@ -325,17 +397,18 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
    (`CONS_A_003`의 R06에서 실측). `CoverageAnalysisServiceTest`가 이 동작을 고정하므로
    **계약 문구만 보고 되돌리면 테스트가 깨진다.** 경위는
    `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "해소됨"
-2. **F06 재설명 + F07 recheck·직원 처리**
-   → F04/F05는 완료. `WorkflowStateMachine`·`NextActionResolver`·`UnderstandingWriter`가
-   이미 있으니 그 위에 얹는다
-   → `/recheck`는 `UnderstandingService.judge(..., RECHECK_ATTEMPT)`를 그대로 재사용하면
-   된다 — attempt만 다르다
-   → `/reexplain`은 응답에 **후속 질문(attempt 2)을 함께 싣고 영속화**해야 한다.
-   그래야 새로고침 후 `pendingQuestion`으로 복구된다
-   → Guardrail 금칙어 목록이 미결정이다 (TRD D-04)
-3. Report + Close + Audit (F08)
+2. ~~F06 재설명 + F07 recheck·직원 처리~~ **완료 + 실 LLM 검증** (2026-08-19).
+   Guardrail D-04도 해소. `tools/run-understanding-eval.ps1`로 전 구간 **19/19 통과**
+3. **`GET /sessions/{id}` 스냅샷 채우기** ← F06이 이걸 전제로 한다
+   → 계약은 "새로고침 후 `pendingQuestion`으로 같은 문구가 복구된다"고 적었는데,
+   `SessionService.getSnapshot`은 아직 `coverage=null`·`understanding=[]`를 내보낸다.
+   **재설명까지 만들어 놓고 새로고침하면 화면이 복구되지 않는다** — 심사 중 새로고침 한 번이
+   데모를 되돌린다. F08 리포트와 데이터 출처가 거의 같으니 함께 하는 게 싸다
+4. Report + Close + Audit (F08)
    → `ConsultationSession.closedAt`·`closedBy`·`unresolvedReason`을 채우는 경로가 아직 없다
-4. 오프라인 평가 모듈 + Rule baseline
+   → 리포지토리는 이제 `staff_resolution`·`re_explanation`까지 생겼다. 남은 건
+   `audit_event`뿐이다
+5. 오프라인 평가 모듈 + Rule baseline
 
 리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·
 `consultation_revision`·`coverage_result`·`gate_override`·`session_question`·
@@ -355,6 +428,10 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
 - 상담 시나리오 6 / 목표 60 — **6건 모두 본문 작성 완료** (2026-08-18).
   `DemoSeedGateConsistencyTest`가 라벨↔기대 Gate 정합성을 자동 검증하므로
   시나리오를 추가할 때 라벨만 맞으면 어긋남이 바로 걸린다
+- **실 LLM 실행 5/6** — `001`·`002`·`003`·`004`·`005` 완료. `006`(장황한 상담) 미실행.
+  `tools/run-coverage-eval.ps1 -Scenarios CONS_A_006` 으로 돌린다(시나리오당 약 $0.03).
+  이 스크립트는 시드에서 본문을 그대로 읽어 쓴다 — Swagger로 손으로 붙여넣으면
+  **본문이 한 글자만 달라져도 provenance가 전부 실패해 측정이 오염된다**
 - 고객 답변 12 / 목표 180
 - 라벨을 먼저 정하고 상담문을 생성하는 방식. 사후 라벨링 비용이 0이다
 
@@ -369,7 +446,13 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   Verifier를 안 돌린 EXPLAINED가 규칙 3 때문에 접히던 것 → Verifier 대상에 EXPLAINED 추가로 해소
 - **`CONS_A_001`의 R02·R03 불안정** — 실행마다 뒤집힌다. 입력이 모호한 케이스의 한계로 보이며
   프롬프트로 더 잡을 수 있을지 불확실하다. **Gate 결과는 3회 모두 정확했으므로 우선순위가 낮다**
-- Guardrail 금칙어 최종 목록 — TRD D-04, Step 7 결정
+- ~~Guardrail 금칙어 최종 목록~~ — **해소** (2026-08-19, TRD D-04). 금칙어 목록 방식.
+  `explanation/Guardrail`에 있고 `GuardrailTest`가 고정한다.
+  **목록에 단어를 더할 때는 부정형으로 쓰이는 단어인지 먼저 볼 것** — 아니면 맞는 설명이 걸린다
+- **Guardrail 임계값 표본이 2건뿐이다** — 1회 실측에서 한 번 걸리고 한 번 통과했다(적정 신호).
+  다만 n=2라 결론은 아니다. 시나리오를 늘릴 때 `retried` 비율을 같이 볼 것
+- **캐시 TTL 결정 시 F04~F07은 고려 대상이 아니다** — 애초에 캐시가 안 걸린다(1024토큰 미만).
+  TTL 논의는 Coverage 2단계에만 해당한다
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)
 - **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없다 —
   §6.6은 Understanding 단계의 `nextAction` → 화면만 정한다.
@@ -389,10 +472,13 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   다만 (1)안을 적용해 실패가 409 `CONCURRENT_SESSION_UPDATE`(recoverable)로 나가므로
   프론트가 재시도할 수 있다. 근본 해결(재시도 루프·행 락·DB 채번)은 결정 문서의
   "위험이 현실화되는 조건"에 해당할 때 재검토
-- **Verifier 대상 범위 미정** — WARN_ONLY Risk가 잘 설명됐어도 semantic 검증을 안 돌리면
-  규칙 3 때문에 INSUFFICIENT로 접혀 불필요한 경고가 뜬다. 계약 결정표와 DB 제약이
-  어긋나는 지점이며 LLM 모델 결정과 함께 판단해야 한다.
-  `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "남은 질문"
+- ~~**Verifier 대상 범위 미정**~~ — **해소** (2026-08-18, 실측 뒷받침 2026-08-19).
+  EXPLAINED 후보도 Verifier를 돌린다.
+  `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "해소됨"
+- **Coverage 레이턴시가 TRD §14 예산(12초)을 넘는다** — 5개 시나리오 실측에서
+  classifier 10.8~23.3s. 타임아웃을 60초로 올려 실패 모양만 바꿔뒀고 **근본 해결은 안 됐다.**
+  배치 병렬화가 유력하나 항목 간 경계 규칙 저하 위험이 있어 재측정 필요.
+  `docs/decisions/2026-08-18-coverage-prompt-tuning.md` "레이턴시가 TRD §14 예산을 넘겼다"
 
 ## 처리 대기 (문서 동기화)
 

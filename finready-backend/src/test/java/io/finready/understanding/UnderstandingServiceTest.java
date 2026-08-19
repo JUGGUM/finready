@@ -55,6 +55,7 @@ class UnderstandingServiceTest {
 	private final SessionQuestionRepository questionRepository = mock(SessionQuestionRepository.class);
 	private final UnderstandingResultRepository resultRepository = mock(UnderstandingResultRepository.class);
 	private final RiskWorkflowStateRepository workflowStateRepository = mock(RiskWorkflowStateRepository.class);
+	private final StaffResolutionRepository staffResolutionRepository = mock(StaffResolutionRepository.class);
 	private final QuestionGenerator questionGenerator = mock(QuestionGenerator.class);
 	private final AnswerJudge answerJudge = mock(AnswerJudge.class);
 	private final UnderstandingWriter writer = mock(UnderstandingWriter.class);
@@ -68,8 +69,8 @@ class UnderstandingServiceTest {
 		service = new UnderstandingService(
 				sessionRepository, productRiskRepository, customerProfileRepository,
 				gateOverrideRepository, questionRepository, resultRepository, workflowStateRepository,
-				questionGenerator, answerJudge, new NextActionResolver(), workflowStateMachine,
-				writer, new StateMachine());
+				staffResolutionRepository, questionGenerator, answerJudge, new NextActionResolver(),
+				workflowStateMachine, writer, new StateMachine());
 
 		when(sessionRepository.findById(SESSION_ID))
 				.thenReturn(Optional.of(session(SessionStatus.COVERAGE_ANALYZED)));
@@ -377,7 +378,186 @@ class UnderstandingServiceTest {
 		}
 	}
 
+	@Nested
+	@DisplayName("F07 후속 확인 (attempt 2)")
+	class Recheck {
+
+		@BeforeEach
+		void issuedRecheckQuestionAndState() {
+			when(questionRepository.findBySessionIdAndRiskIdAndAttempt(SESSION_ID, "R01", (short) 2))
+					.thenReturn(Optional.of(question("R01", (short) 2, "R01 후속 질문")));
+			when(workflowStateRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.of(inProgress("R01")));
+			when(resultRepository.findBySessionIdAndRiskIdAndAttempt(anyString(), anyString(), any(Short.class)))
+					.thenReturn(Optional.empty());
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(session(SessionStatus.UNDERSTANDING_IN_PROGRESS)));
+		}
+
+		@Test
+		@DisplayName("attempt 2 로 기록되고 남은 시도는 0 이다")
+		void recordsSecondAttempt() {
+			judgeReturns(UnderstandingStatus.UNDERSTOOD, null);
+
+			UnderstandingResponse response = service.submitRecheckAnswer(SESSION_ID, answer("R01"));
+
+			assertThat(response.attempt()).isEqualTo(2);
+			assertThat(response.remainingAttempts()).isZero();
+		}
+
+		@Test
+		@DisplayName("후속에서도 안 풀리면 MANUAL_REVIEW_REQUIRED 이고 처분은 아직 null 이다")
+		void unresolvedGoesToStaff() {
+			judgeReturns(UnderstandingStatus.MISUNDERSTOOD, "여전히 반대로 이해");
+
+			UnderstandingResponse response = service.submitRecheckAnswer(SESSION_ID, answer("R01"));
+
+			assertThat(response.workflowStatus()).isEqualTo(WorkflowStatus.MANUAL_REVIEW_REQUIRED);
+			// 계약이 명시한다 — MANUAL_REVIEW_REQUIRED 는 workflowStatus 의 값이지 처분이 아니다
+			assertThat(response.finalDisposition()).isNull();
+			assertThat(response.nextAction()).isEqualTo(NextAction.STAFF_RESOLUTION_REQUIRED);
+		}
+
+		@Test
+		@DisplayName("UNCERTAIN 도 attempt 2 에서는 직원에게 넘어간다")
+		void uncertainAlsoGoesToStaff() {
+			judgeReturns(UnderstandingStatus.UNCERTAIN, "여전히 모르겠다는 답변");
+
+			UnderstandingResponse response = service.submitRecheckAnswer(SESSION_ID, answer("R01"));
+
+			assertThat(response.nextAction()).isEqualTo(NextAction.STAFF_RESOLUTION_REQUIRED);
+		}
+
+		@Test
+		@DisplayName("Risk 당 1회만 허용된다 — 두 번째는 ATTEMPT_LIMIT_EXCEEDED")
+		void onlyOnce() {
+			when(resultRepository.findBySessionIdAndRiskIdAndAttempt(SESSION_ID, "R01", (short) 2))
+					.thenReturn(Optional.of(mock(UnderstandingResult.class)));
+
+			assertThat(errorCodeOf(() -> service.submitRecheckAnswer(SESSION_ID, answer("R01"))))
+					.isEqualTo(ErrorCode.ATTEMPT_LIMIT_EXCEEDED);
+		}
+
+		@Test
+		@DisplayName("attempt 2 질문이 없으면 답할 수 없다 — 재설명이나 UNCERTAIN 을 거쳐야 발급된다")
+		void requiresIssuedRecheckQuestion() {
+			when(questionRepository.findBySessionIdAndRiskIdAndAttempt(SESSION_ID, "R01", (short) 2))
+					.thenReturn(Optional.empty());
+
+			assertThat(errorCodeOf(() -> service.submitRecheckAnswer(SESSION_ID, answer("R01"))))
+					.isEqualTo(ErrorCode.INVALID_STATE_TRANSITION);
+		}
+	}
+
+	@Nested
+	@DisplayName("F07 직원 해결 처리")
+	class StaffResolutionHandling {
+
+		@BeforeEach
+		void manualReviewState() {
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(session(SessionStatus.AWAITING_STAFF_REVIEW)));
+			when(workflowStateRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.of(manualReview("R01")));
+			when(staffResolutionRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.empty());
+			when(resultRepository.findBySessionIdAndRiskIdOrderByAttemptAsc(SESSION_ID, "R01"))
+					.thenReturn(List.of());
+		}
+
+		@Test
+		@DisplayName("RESOLVED_BY_STAFF 면 COMPLETE / RESOLVED_BY_STAFF 로 종결된다")
+		void resolvedByStaff() {
+			StaffResolutionResponse response = service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.RESOLVED_BY_STAFF, "구두로 다시 설명함", "staff-1"));
+
+			assertThat(response.workflowStatus()).isEqualTo(WorkflowStatus.COMPLETE);
+			assertThat(response.finalDisposition()).isEqualTo(FinalDisposition.RESOLVED_BY_STAFF);
+		}
+
+		@Test
+		@DisplayName("UNRESOLVED 여도 다음 Risk 로 진행한다 (PRD §7.5)")
+		void unresolvedStillProceeds() {
+			RiskWorkflowState r01 = manualReview("R01");
+			when(workflowStateRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.of(r01));
+			when(workflowStateRepository.findBySessionIdOrderByRiskIdAsc(SESSION_ID))
+					.thenReturn(List.of(r01, new RiskWorkflowState(SESSION_ID, "R02")));
+
+			StaffResolutionResponse response = service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.UNRESOLVED, "고객이 이해를 거부함", "staff-1"));
+
+			assertThat(response.finalDisposition()).isEqualTo(FinalDisposition.UNRESOLVED);
+			assertThat(response.nextAction()).isEqualTo(NextAction.NEXT_RISK);
+		}
+
+		@Test
+		@DisplayName("AI 원판정을 덮어쓰지 않는다 — 응답에 그대로 실린다 (규칙 1)")
+		void aiStatusIsNotOverwritten() {
+			UnderstandingResult second = mock(UnderstandingResult.class);
+			when(second.getAiStatus()).thenReturn(UnderstandingStatus.MISUNDERSTOOD);
+			when(resultRepository.findBySessionIdAndRiskIdOrderByAttemptAsc(SESSION_ID, "R01"))
+					.thenReturn(List.of(second));
+
+			StaffResolutionResponse response = service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.RESOLVED_BY_STAFF, "구두로 다시 설명함", "staff-1"));
+
+			// 직원이 해결해도 AI 는 여전히 MISUNDERSTOOD 다. 리포트에 둘 다 표시된다
+			assertThat(response.aiStatus()).isEqualTo(UnderstandingStatus.MISUNDERSTOOD);
+			assertThat(response.finalDisposition()).isEqualTo(FinalDisposition.RESOLVED_BY_STAFF);
+			verify(resultRepository, never()).save(any());
+		}
+
+		@Test
+		@DisplayName("같은 Risk 를 두 번 처리할 수 없다 — uq_staff_resolution 을 앞당겨 막는다")
+		void duplicateRejected() {
+			when(staffResolutionRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.of(mock(StaffResolution.class)));
+
+			assertThat(errorCodeOf(() -> service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.RESOLVED_BY_STAFF, "다시 설명함", "staff-1"))))
+					.isEqualTo(ErrorCode.RISK_ALREADY_FINALIZED);
+		}
+
+		@Test
+		@DisplayName("사유가 5자 미만이면 거절한다 — ck_resolution_reason_len 을 앞당겨 막는다")
+		void shortReasonRejected() {
+			assertThat(errorCodeOf(() -> service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.UNRESOLVED, "짧음", "staff-1"))))
+					.isEqualTo(ErrorCode.UNRESOLVED_REASON_REQUIRED);
+			verify(writer, never()).saveStaffResolution(anyString(), any(), any(), anyBooleanArg());
+		}
+
+		@Test
+		@DisplayName("마지막 Risk 를 처리하면 리포트로 간다")
+		void lastRiskGoesToReport() {
+			RiskWorkflowState r01 = manualReview("R01");
+			when(workflowStateRepository.findBySessionIdAndRiskId(SESSION_ID, "R01"))
+					.thenReturn(Optional.of(r01));
+			when(workflowStateRepository.findBySessionIdOrderByRiskIdAsc(SESSION_ID))
+					.thenReturn(List.of(r01, completed("R02")));
+
+			StaffResolutionResponse response = service.resolveByStaff(SESSION_ID, "R01",
+					new StaffResolutionRequest(StaffDisposition.RESOLVED_BY_STAFF, "구두로 다시 설명함", "staff-1"));
+
+			assertThat(response.nextAction()).isEqualTo(NextAction.GO_TO_REPORT);
+			verify(writer).saveStaffResolution(eq(SESSION_ID), any(), any(), eq(true));
+		}
+	}
+
 	// ------------------------------------------------------------------
+
+	private RiskWorkflowState inProgress(String riskId) {
+		RiskWorkflowState state = new RiskWorkflowState(SESSION_ID, riskId);
+		state.transitionTo(WorkflowStatus.IN_PROGRESS, null, workflowStateMachine);
+		return state;
+	}
+
+	private RiskWorkflowState manualReview(String riskId) {
+		RiskWorkflowState state = inProgress(riskId);
+		state.transitionTo(WorkflowStatus.MANUAL_REVIEW_REQUIRED, null, workflowStateMachine);
+		return state;
+	}
 
 	private void judgeReturns(UnderstandingStatus status, String reason) {
 		when(answerJudge.judge(any())).thenReturn(new AnswerJudge.Verdict(status, reason));

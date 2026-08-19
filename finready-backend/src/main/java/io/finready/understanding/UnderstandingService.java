@@ -40,6 +40,9 @@ public class UnderstandingService {
 
 	private static final Logger log = LoggerFactory.getLogger(UnderstandingService.class);
 
+	/** ck_resolution_reason_len 과 계약(minLength: 5)이 같은 값이다 */
+	private static final int MIN_RESOLUTION_REASON = 5;
+
 	private final ConsultationSessionRepository sessionRepository;
 	private final ProductRiskRepository productRiskRepository;
 	private final CustomerProfileRepository customerProfileRepository;
@@ -47,6 +50,7 @@ public class UnderstandingService {
 	private final SessionQuestionRepository questionRepository;
 	private final UnderstandingResultRepository resultRepository;
 	private final RiskWorkflowStateRepository workflowStateRepository;
+	private final StaffResolutionRepository staffResolutionRepository;
 	private final QuestionGenerator questionGenerator;
 	private final AnswerJudge answerJudge;
 	private final NextActionResolver nextActionResolver;
@@ -61,6 +65,7 @@ public class UnderstandingService {
 	                            SessionQuestionRepository questionRepository,
 	                            UnderstandingResultRepository resultRepository,
 	                            RiskWorkflowStateRepository workflowStateRepository,
+	                            StaffResolutionRepository staffResolutionRepository,
 	                            QuestionGenerator questionGenerator,
 	                            AnswerJudge answerJudge,
 	                            NextActionResolver nextActionResolver,
@@ -74,6 +79,7 @@ public class UnderstandingService {
 		this.questionRepository = questionRepository;
 		this.resultRepository = resultRepository;
 		this.workflowStateRepository = workflowStateRepository;
+		this.staffResolutionRepository = staffResolutionRepository;
 		this.questionGenerator = questionGenerator;
 		this.answerJudge = answerJudge;
 		this.nextActionResolver = nextActionResolver;
@@ -136,6 +142,145 @@ public class UnderstandingService {
 	 */
 	public UnderstandingResponse submitAnswer(String sessionId, SubmitAnswerRequest request) {
 		return judge(sessionId, request, UnderstandingPolicy.FIRST_ATTEMPT);
+	}
+
+	/**
+	 * F07 — attempt 2 답변 판정.
+	 *
+	 * <p>attempt 만 다르고 나머지는 attempt 1 과 같다. <b>경로가 attempt 를 정한다</b> —
+	 * 클라이언트가 보내지 않으므로 2를 1로 바꿔 재시도할 수 없다. Risk 당 1회는
+	 * {@code judge} 안의 중복 검사가 강제하고, DB 의 {@code ck_understanding_attempt} 가 2를 넘기지 못하게 한다.
+	 */
+	public UnderstandingResponse submitRecheckAnswer(String sessionId, SubmitAnswerRequest request) {
+		return judge(sessionId, request, UnderstandingPolicy.RECHECK_ATTEMPT);
+	}
+
+	/**
+	 * F07 — 직원 해결 처리.
+	 *
+	 * <p><b>{@code ai_status} 를 덮어쓰지 않는다</b>(규칙 1). {@code staff_resolution} 행을 더할 뿐이며,
+	 * AI 판정은 리포트에 원래 값으로 남는다. 처분이 {@code UNRESOLVED} 여도 다음 Risk 로
+	 * 진행한다 — 미해결 여부는 최종 Close 상태에서 구분된다(PRD §7.5).
+	 */
+	public StaffResolutionResponse resolveByStaff(String sessionId,
+	                                              String riskId,
+	                                              StaffResolutionRequest request) {
+		ConsultationSession session = loadOpenSession(sessionId);
+		require(riskId, "riskId");
+
+		if (request == null || request.disposition() == null) {
+			throw new ApiException(ErrorCode.INVALID_REQUEST, "처리 구분을 선택해 주세요.", riskId);
+		}
+		String reason = request.reason() == null ? "" : request.reason().strip();
+		if (reason.length() < MIN_RESOLUTION_REASON) {
+			// ck_resolution_reason_len 을 여기서 먼저 막는다. DB 까지 가면 400 이 아니라 500 이 된다
+			throw new ApiException(ErrorCode.UNRESOLVED_REASON_REQUIRED,
+					"처리 사유를 %d자 이상 입력해 주세요.".formatted(MIN_RESOLUTION_REASON), riskId);
+		}
+		String actor = require(request.actor(), "actor");
+
+		RiskWorkflowState workflowState = workflowStateRepository
+				.findBySessionIdAndRiskId(sessionId, riskId)
+				.orElseThrow(() -> new ApiException(ErrorCode.RISK_NOT_FOUND,
+						"이해 확인 대상이 아닌 항목입니다.", riskId));
+
+		if (staffResolutionRepository.findBySessionIdAndRiskId(sessionId, riskId).isPresent()) {
+			throw new ApiException(ErrorCode.RISK_ALREADY_FINALIZED,
+					"이미 처리가 끝난 항목입니다.", riskId);
+		}
+
+		FinalDisposition disposition = request.disposition() == StaffDisposition.RESOLVED_BY_STAFF
+				? FinalDisposition.RESOLVED_BY_STAFF
+				: FinalDisposition.UNRESOLVED;
+		workflowState.transitionTo(WorkflowStatus.COMPLETE, disposition, workflowStateMachine);
+
+		StaffResolution resolution = new StaffResolution(
+				sessionId, riskId, request.disposition(), reason, actor);
+
+		NextAction nextAction = nextActionResolver
+				.afterStaffResolution(hasRemainingRisk(sessionId, riskId));
+
+		writer.saveStaffResolution(sessionId, resolution, workflowState,
+				nextAction == NextAction.GO_TO_REPORT);
+
+		return new StaffResolutionResponse(
+				riskId,
+				resolution.getDisposition(),
+				resolution.getReason(),
+				resolution.getActor(),
+				latestAiStatus(sessionId, riskId),
+				workflowState.getWorkflowStatus(),
+				workflowState.getFinalDisposition(),
+				nextAction,
+				resolution.getCreatedAt());
+	}
+
+	/**
+	 * F06 진입 조건 확인 — 재설명은 {@code aiStatus=MISUNDERSTOOD} 인 Risk 에만 적용된다.
+	 *
+	 * <p>이 검사가 {@code explanation} 패키지가 아니라 여기 있는 이유는, 판정 이력을 읽는
+	 * 규칙이 두 곳으로 갈라지지 않게 하기 위해서다. UNCERTAIN 은 재설명 없이 바로 후속
+	 * 확인으로 간다(PRD §7.5) — 그 경로를 여기서 한 번만 막는다.
+	 *
+	 * @return 고객이 반대로 이해한 답변. S06 좌측에 그대로 표시된다
+	 * @throws ApiException 해당 Risk 가 MISUNDERSTOOD 가 아니면 {@code INVALID_STATE_TRANSITION}(409)
+	 */
+	public String requireMisunderstoodAnswer(String sessionId, String riskId) {
+		UnderstandingResult first = resultRepository
+				.findBySessionIdAndRiskIdAndAttempt(sessionId, riskId, UnderstandingPolicy.FIRST_ATTEMPT)
+				.orElseThrow(() -> new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+						"아직 답변이 기록되지 않았습니다.", riskId));
+
+		if (first.getAiStatus() != UnderstandingStatus.MISUNDERSTOOD) {
+			throw new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+					"재설명이 필요한 항목이 아닙니다.", riskId);
+		}
+		return first.getAnswer();
+	}
+
+	/**
+	 * F06 이 부른다 — 재설명 응답에 실을 후속 질문(attempt 2)을 발급하고 영속화한다.
+	 *
+	 * <p><b>질문 발급은 이 모듈에만 둔다</b>(TRD §4.2·§4.6). {@code explanation} 이 직접
+	 * {@code session_question} 을 쓰면 "발급 규칙"이 두 곳이 되고, 멱등성도 각자 구현하게 된다.
+	 *
+	 * <p>멱등하다 — 재호출해도 문구가 바뀌지 않으며, 새로고침 후
+	 * {@code GET /sessions/{id}} 의 {@code pendingQuestion} 으로 같은 문구가 복구된다.
+	 */
+	public IssuedQuestion issueRecheckQuestion(String sessionId, String riskId) {
+		ConsultationSession session = loadOpenSession(sessionId);
+
+		ProductRisk risk = questionTargets(session).stream()
+				.filter(candidate -> candidate.getRiskId().equals(riskId))
+				.findFirst()
+				.orElseThrow(() -> new ApiException(ErrorCode.RISK_NOT_FOUND,
+						"이해 확인 대상이 아닌 항목입니다.", riskId));
+
+		SessionQuestion first = questionRepository
+				.findBySessionIdAndRiskIdAndAttempt(sessionId, riskId, UnderstandingPolicy.FIRST_ATTEMPT)
+				.orElseThrow(() -> new ApiException(ErrorCode.INVALID_STATE_TRANSITION,
+						"질문이 아직 발급되지 않았습니다.", riskId));
+
+		SessionQuestion recheck = issueRecheckQuestion(sessionId, risk, first);
+		if (recheck.getId() == null) {
+			writer.saveRecheckQuestion(recheck);
+		}
+		return new IssuedQuestion(recheck.getQuestion(), recheck.getGenerationSource());
+	}
+
+	/** {@link #issueRecheckQuestion(String, String)} 의 반환값 — 엔티티를 패키지 밖으로 내보내지 않는다 */
+	public record IssuedQuestion(String question, GenerationSource source) {
+	}
+
+	/**
+	 * 직원 처리 응답에 실을 AI 원판정. 마지막 attempt 의 값이다.
+	 *
+	 * <p>없을 수도 있다 — Override 로 건너뛴 Risk 는 답변 기록 없이 COMPLETE 가 된다.
+	 */
+	private UnderstandingStatus latestAiStatus(String sessionId, String riskId) {
+		List<UnderstandingResult> results =
+				resultRepository.findBySessionIdAndRiskIdOrderByAttemptAsc(sessionId, riskId);
+		return results.isEmpty() ? null : results.getLast().getAiStatus();
 	}
 
 	// ------------------------------------------------------------------

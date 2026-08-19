@@ -2,6 +2,7 @@ package io.finready.ai;
 
 import io.finready.coverage.CoverageClassifier;
 import io.finready.coverage.SemanticVerifier;
+import io.finready.explanation.ReExplanationGenerator;
 import io.finready.understanding.AnswerJudge;
 import io.finready.understanding.QuestionGenerator;
 import org.slf4j.Logger;
@@ -89,6 +90,19 @@ public class AiPortConfig {
 			};
 		}
 		return new ClaudeAnswerJudge(gateway);
+	}
+
+	/**
+	 * {@code questionGenerator} 와 같이 <b>조용한 스텁</b>이다. 재설명에는 검수된
+	 * {@code fallbackPlainExplanation} 이 있고 호출부가 이미 그 경로를 갖고 있다 —
+	 * 여기서 던지면 LLM 없이 F06 화면을 띄워볼 수 없다.
+	 */
+	@Bean
+	ReExplanationGenerator reExplanationGenerator() {
+		if (gateway == null) {
+			return (riskId, title, fact, sourceText, answer, level) -> null;
+		}
+		return new ClaudeReExplainer(gateway);
 	}
 
 	/**

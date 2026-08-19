@@ -32,4 +32,25 @@ public class UnderstandingController {
 	                                          @RequestBody SubmitAnswerRequest request) {
 		return understandingService.submitAnswer(sessionId, request);
 	}
+
+	/**
+	 * F07 attempt 2. Risk 당 1회만 허용된다 — 두 번째 호출은 409 {@code ATTEMPT_LIMIT_EXCEEDED} 다.
+	 *
+	 * <p>여기서도 MISUNDERSTOOD/UNCERTAIN 이면 {@code workflowStatus} 가
+	 * {@code MANUAL_REVIEW_REQUIRED} 가 되고 {@code finalDisposition} 은 <b>아직 null</b> 이다 —
+	 * 직원이 처리해야 값이 생긴다.
+	 */
+	@PostMapping("/{sessionId}/recheck")
+	public UnderstandingResponse submitRecheckAnswer(@PathVariable String sessionId,
+	                                                 @RequestBody SubmitAnswerRequest request) {
+		return understandingService.submitRecheckAnswer(sessionId, request);
+	}
+
+	/** F07 직원 해결 처리. AI 원판정을 덮어쓰지 않는다(규칙 1) */
+	@PostMapping("/{sessionId}/risks/{riskId}/staff-resolution")
+	public StaffResolutionResponse resolveByStaff(@PathVariable String sessionId,
+	                                              @PathVariable String riskId,
+	                                              @RequestBody StaffResolutionRequest request) {
+		return understandingService.resolveByStaff(sessionId, riskId, request);
+	}
 }
