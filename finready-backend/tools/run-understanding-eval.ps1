@@ -68,6 +68,21 @@ function Invoke-Json {
     return $text | ConvertFrom-Json
 }
 
+# 오류 응답의 code 를 꺼낸다. "거부됐다"만 보면 엉뚱한 이유로 거부돼도 통과로 찍힌다 —
+# 실제로 close 가 WARNING_ACKNOWLEDGEMENT_REQUIRED 가 아니라 INVALID_STATE_TRANSITION 으로
+# 막혔는데 검사는 초록이었다 (2026-08-19).
+function Get-ErrorCode {
+    param($ErrorRecord)
+    try {
+        $stream = $ErrorRecord.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+        return ($reader.ReadToEnd() | ConvertFrom-Json).code
+    }
+    catch {
+        return $null
+    }
+}
+
 function Write-Step {
     param([string] $Title)
     Write-Host ''
@@ -99,6 +114,25 @@ function Get-Answer {
 }
 
 $checks = New-Object System.Collections.Generic.List[bool]
+$sessionId = $null
+
+function Show-Summary {
+    $passed = @($checks | Where-Object { $_ }).Count
+    Write-Host ''
+    Write-Host ('=' * 78) -ForegroundColor DarkGray
+    $color = 'Yellow'
+    if ($checks.Count -gt 0 -and $passed -eq $checks.Count) { $color = 'Green' }
+    Write-Host ("검증 {0}/{1} 통과   sessionId={2}" -f $passed, $checks.Count, $sessionId) -ForegroundColor $color
+}
+
+# 중간에 터져도 여기까지 통과한 검사는 보여준다. 안 그러면 실패한 실행에서 배우는 게
+# "어딘가에서 죽었다"뿐이고, 실 LLM 호출 비용을 물고도 남는 정보가 없다 (2026-08-19)
+trap {
+    Write-Host ''
+    Write-Host ("중단됨: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    Show-Summary
+    break
+}
 
 try {
     $health = Invoke-Json -Method GET -Url "$BaseUrl/actuator/health"
@@ -249,13 +283,40 @@ $checks.Add((Write-Check 'R02 AI판정 보존' 'MISUNDERSTOOD' $r02State.attempt
 $checks.Add((Write-Check 'nextAction 복구' 'NEXT_RISK' $snapshot.nextAction))
 
 # ---------------------------------------------------------------- 6) R03 마무리
-Write-Step '6) R03  한 번에 이해 → 이해확인 단계 종료'
+Write-Step '6) R03  마지막 Risk 를 끝까지 몰아 이해확인 단계를 닫는다'
 
 $c1 = Get-Answer 'ANS_R03_002'
 Write-Host ("  답변(attempt 1, gold={0}): {1}" -f $c1.goldLabel, $c1.answer) -ForegroundColor Gray
 $r03 = Submit-Answer 'understanding' 'R03' $c1.answer
+
+# 라벨 일치 여부는 여기서 기록하고 끝낸다 — 아래 흐름을 이 값에 걸지 않는다
 $checks.Add((Write-Check 'R03 aiStatus' $c1.goldLabel $r03.aiStatus))
-$checks.Add((Write-Check 'R03 disposition' 'AUTO_RESOLVED' $r03.finalDisposition))
+Write-Host ("  reason: {0}" -f $r03.reason) -ForegroundColor DarkGray
+
+# F08 을 보려면 세션이 AWAITING_STAFF_REVIEW 여야 한다. 그걸 "R03 이 한 번에 UNDERSTOOD 로
+# 나온다"에 걸어두면, 판정이 흔들리는 날에는 F08 검증이 통째로 사라진다 — 실제로 그렇게 됐다
+# (2026-08-19, UNCERTAIN 판정). 판정이 무엇이든 R03 을 COMPLETE 로 만든 뒤 F08 을 본다.
+# 경로는 유한하다: attempt 2 가 상한이고, 거기서도 안 풀리면 직원 처리로 끝난다.
+Write-Host ("  attempt 1 → aiStatus={0}, nextAction={1}" -f $r03.aiStatus, $r03.nextAction) -ForegroundColor DarkGray
+
+if ($r03.nextAction -eq 'REEXPLAIN') {
+    Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/reexplain" -Body @{ riskId = 'R03' } | Out-Null
+    Write-Host '  → 재설명 후 후속 확인' -ForegroundColor DarkGray
+}
+if ($r03.nextAction -eq 'REEXPLAIN' -or $r03.nextAction -eq 'RECHECK') {
+    $r03 = Submit-Answer 'recheck' 'R03' $c1.answer
+    Write-Host ("  attempt 2 → aiStatus={0}, workflow={1}" -f $r03.aiStatus, $r03.workflowStatus) -ForegroundColor DarkGray
+}
+if ($r03.workflowStatus -eq 'MANUAL_REVIEW_REQUIRED') {
+    $r03 = Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/risks/R03/staff-resolution" -Body @{
+        disposition = 'RESOLVED_BY_STAFF'
+        reason      = '조기상환 조건과 미충족 시 이월을 구두로 다시 확인함'
+        actor       = 'staff-demo'
+    }
+    Write-Host '  → 직원 처리로 마무리' -ForegroundColor DarkGray
+}
+
+$checks.Add((Write-Check 'R03 workflowStatus' 'COMPLETE' $r03.workflowStatus))
 # 마지막 Risk 가 끝나면 세션이 직원 검토 단계로 넘어간다
 $checks.Add((Write-Check 'R03 nextAction' 'GO_TO_REPORT' $r03.nextAction))
 
@@ -307,17 +368,17 @@ $requiredAck = @($report.closeEligibility.requiresWarningAcknowledgement)
 
 # 확인 목록을 빠뜨리면 400 이어야 한다. 있을 때만 의미가 있는 검사다
 if ($requiredAck.Count -gt 0) {
-    $rejected = $false
+    $rejectCode = '(거부되지 않음)'
     try {
         Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/close" -Body @{
             actor = 'staff-demo'
         } | Out-Null
     }
     catch {
-        $rejected = $true
-        Write-Host ("  경고 확인 누락 → 거부됨 ({0})" -f $_.Exception.Response.StatusCode) -ForegroundColor DarkGray
+        $rejectCode = Get-ErrorCode $_
     }
-    $checks.Add((Write-Check '경고 미확인 거부' $true $rejected))
+    # 코드까지 본다 — 다른 이유로 막혀도 "거부됨"으로 읽히면 검사가 거짓말을 한다
+    $checks.Add((Write-Check '경고 미확인 거부' 'WARNING_ACKNOWLEDGEMENT_REQUIRED' $rejectCode))
 }
 else {
     Write-Host '  확인 대상 WARN_ONLY 없음 — 누락 거부 검사는 건너뛴다' -ForegroundColor DarkGray
@@ -347,12 +408,7 @@ $checks.Add((Write-Check '종료 후 resumePoint' 'S08' $finalSnapshot.resumePoi
 $checks.Add((Write-Check '종료 후 nextAction' $null $finalSnapshot.nextAction))
 
 # ---------------------------------------------------------------- 결과
-$passed = @($checks | Where-Object { $_ }).Count
-Write-Host ''
-Write-Host ('=' * 78) -ForegroundColor DarkGray
-$summaryColor = 'Yellow'
-if ($passed -eq $checks.Count) { $summaryColor = 'Green' }
-Write-Host ("검증 {0}/{1} 통과   sessionId={2}" -f $passed, $checks.Count, $sessionId) -ForegroundColor $summaryColor
+Show-Summary
 
 if ($OutFile) {
     [pscustomobject]@{

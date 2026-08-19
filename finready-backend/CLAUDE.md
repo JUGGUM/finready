@@ -427,6 +427,34 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
   → **포트 시그니처에 `sessionId`를 필수 인자로 넣어 컴파일러가 강제**하게 고쳤다
   (ThreadLocal 안 씀 — 조용히 실패하는 관측 장치는 없느니만 못하다)
 
+### 실측한 것 (2026-08-19, F08 1차 — 중단됐지만 얻은 것)
+
+`run-understanding-eval.ps1` 전 구간 실행이 close 단계에서 중단됐다. **서버 결함은 없었다.**
+
+- **감사 기록이 실제로 남는다.** `audit_event` INSERT 12건이 예상 지점에 전부 찍혔다 —
+  SESSION_CREATED / REVISION_SAVED / COVERAGE_ANALYZED / QUESTIONS_ISSUED /
+  ANSWER_JUDGED×4 / RE_EXPLANATION_GENERATED×2 / STAFF_RESOLUTION_RECORDED.
+  `Propagation.MANDATORY` 도 전 경로에서 통과했다(예외 없음)
+- **멱등 경로는 감사 로그를 부풀리지 않는다.** 재설명 두 번째 호출에는 `audit_event`
+  INSERT 가 없다 — `persist()` 를 멱등 분기 안쪽에 둔 것이 실제로 작동한다.
+  밖에 뒀다면 새로고침 횟수가 "재설명을 몇 번 만들었나"로 기록됐을 것이다
+- **`canClose` 가 제 일을 했다.** 이해확인이 안 끝난 상태의 close 를
+  `INVALID_STATE_TRANSITION` 으로 정확히 막았다
+- ⚠️ **`ANS_R03_002`(gold=UNDERSTOOD)가 `UNCERTAIN` 으로 판정됐다.**
+  *"조건이 맞아야 상환되는 거고, 안 맞으면 그냥 계속 가는 거네요."* — fact 의 두 요소를
+  다 담았지만 **"만기까지 묶인다"를 흐리게 말한다.** 판정기 판단도 방어 가능하다.
+  **n=1이라 라벨은 고치지 않았다** — R02·R03 불안정과 같은 성격(경계 케이스)으로 보인다
+- ⚠️ **스크립트 결함 3건을 고쳤다.** 서버가 아니라 평가 장치의 문제였다
+  · **F08 도달을 모델 판정 하나에 걸어뒀다** — R03 이 한 번에 UNDERSTOOD 로 나와야만
+  세션이 `AWAITING_STAFF_REVIEW` 가 됐다. 판정이 흔들리는 날엔 **F08 검증이 통째로 사라진다.**
+  이제 판정이 무엇이든 R03 을 COMPLETE 로 몰고(재설명→recheck→직원 처리, 경로가 유한하다)
+  F08 을 본다. 라벨 일치 여부는 별도 검사로 기록만 한다
+  · **중단되면 검증 요약이 안 찍혔다** — 실 LLM 비용을 물고도 "어딘가에서 죽었다"만 남았다.
+  `trap` + `Show-Summary` 로 중간까지의 결과를 항상 출력한다
+  · **"거부됐다"만 보는 검사는 거짓말을 한다** — close 경고 검사가
+  `WARNING_ACKNOWLEDGEMENT_REQUIRED` 가 아니라 `INVALID_STATE_TRANSITION` 으로 막혔는데
+  초록으로 찍혔다. 이제 **오류 code 까지 대조**한다
+
 ### 다음 순서
 1. ~~F03~~ **완료** (2026-08-18). 파이프라인 + 구현체 4개 + 프롬프트 튜닝 + 실 LLM 검증(`CONS_A_001`·`CONS_A_003`)
    → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
