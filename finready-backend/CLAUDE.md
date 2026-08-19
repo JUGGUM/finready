@@ -427,33 +427,66 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
   → **포트 시그니처에 `sessionId`를 필수 인자로 넣어 컴파일러가 강제**하게 고쳤다
   (ThreadLocal 안 씀 — 조용히 실패하는 관측 장치는 없느니만 못하다)
 
-### 실측한 것 (2026-08-19, F08 1차 — 중단됐지만 얻은 것)
+### 실측한 것 (2026-08-19, F04~F08 전 구간 실 LLM)
 
-`run-understanding-eval.ps1` 전 구간 실행이 close 단계에서 중단됐다. **서버 결함은 없었다.**
+`run-understanding-eval.ps1` — `CONS_A_002` 2회 실행. 1차는 close 에서 중단, 2차 **54/56 통과.**
+어긋난 2건 중 **서버 결함은 0건**이다.
 
-- **감사 기록이 실제로 남는다.** `audit_event` INSERT 12건이 예상 지점에 전부 찍혔다 —
-  SESSION_CREATED / REVISION_SAVED / COVERAGE_ANALYZED / QUESTIONS_ISSUED /
-  ANSWER_JUDGED×4 / RE_EXPLANATION_GENERATED×2 / STAFF_RESOLUTION_RECORDED.
-  `Propagation.MANDATORY` 도 전 경로에서 통과했다(예외 없음)
-- **멱등 경로는 감사 로그를 부풀리지 않는다.** 재설명 두 번째 호출에는 `audit_event`
-  INSERT 가 없다 — `persist()` 를 멱등 분기 안쪽에 둔 것이 실제로 작동한다.
+**F08 이 실제로 작동한다**
+
+- **감사 이벤트 13건이 예상 지점에 전부 남았다.** `actorRole` 이 의도대로 갈린다 —
+  SESSION_CREATED·REVISION_SAVED·QUESTIONS_ISSUED는 `SYSTEM`,
+  판정·재설명은 `AI`, 직원 처리·종료는 `STAFF`.
+  `Propagation.MANDATORY` 는 전 경로에서 예외 없이 통과했다
+- **멱등 경로는 감사 로그를 부풀리지 않는다.** 재설명 재호출·종료 재호출 어느 쪽도
+  `audit_event` 를 추가하지 않았다 — `persist()` 를 멱등 분기 **안쪽**에 둔 판단이 맞았다.
   밖에 뒀다면 새로고침 횟수가 "재설명을 몇 번 만들었나"로 기록됐을 것이다
-- **`canClose` 가 제 일을 했다.** 이해확인이 안 끝난 상태의 close 를
-  `INVALID_STATE_TRANSITION` 으로 정확히 막았다
-- ⚠️ **`ANS_R03_002`(gold=UNDERSTOOD)가 `UNCERTAIN` 으로 판정됐다.**
-  *"조건이 맞아야 상환되는 거고, 안 맞으면 그냥 계속 가는 거네요."* — fact 의 두 요소를
-  다 담았지만 **"만기까지 묶인다"를 흐리게 말한다.** 판정기 판단도 방어 가능하다.
-  **n=1이라 라벨은 고치지 않았다** — R02·R03 불안정과 같은 성격(경계 케이스)으로 보인다
-- ⚠️ **스크립트 결함 3건을 고쳤다.** 서버가 아니라 평가 장치의 문제였다
-  · **F08 도달을 모델 판정 하나에 걸어뒀다** — R03 이 한 번에 UNDERSTOOD 로 나와야만
-  세션이 `AWAITING_STAFF_REVIEW` 가 됐다. 판정이 흔들리는 날엔 **F08 검증이 통째로 사라진다.**
-  이제 판정이 무엇이든 R03 을 COMPLETE 로 몰고(재설명→recheck→직원 처리, 경로가 유한하다)
-  F08 을 본다. 라벨 일치 여부는 별도 검사로 기록만 한다
-  · **중단되면 검증 요약이 안 찍혔다** — 실 LLM 비용을 물고도 "어딘가에서 죽었다"만 남았다.
+- **`canClose` 가 양방향으로 맞았다.** 이해확인 미완료 상태(1차)에서는
+  `INVALID_STATE_TRANSITION`, 완료 후에는 `canClose=true` → 종료 성공
+- **경고 확인 요구가 실제로 걸렸다.** `CONS_A_002` 의 `warningRiskIds=[R09]` 를 빠뜨린
+  close 가 `WARNING_ACKNOWLEDGEMENT_REQUIRED` 로 거부됐다.
+  **WARN_ONLY 가 Gate 는 통과시키되 종료는 막는다는 설계가 처음으로 실증됐다**
+- 종료 후 `resumePoint=S08`, `nextAction=null` — 끝난 상담에 다음 행동 버튼이 안 그려진다
+
+**어긋난 2건**
+
+- ⚠️ **`ANS_R03_002`(gold=UNDERSTOOD) → `UNCERTAIN`. 2회 연속, 같은 이유다.**
+  판정 근거: *"'조건이 맞아야'의 구체적 내용(3개 기초자산 모두 배리어 이상)을 언급하지 않아
+  핵심 조건을 이해했는지 확인할 수 없다."* 무작위 흔들림이 아니라 **일관된 불일치**다.
+  → **질문이 매번 LLM 생성인데 라벨은 답변에만 붙어 있다.** 이 실행의 질문은
+  *"…어떤 조건이 필요하다고 이해하셨나요?"* 로 조건을 직접 물었고, 그 질문에 대해
+  *"조건이 맞아야"* 는 순환적인 답이다. **같은 답변이 질문 문구에 따라 다른 라벨이 될 수 있다** —
+  데이터셋 설계의 구조적 문제이지 판정기 오류가 아니다
+- ⚠️ **`close 멱등` 은 검사가 틀렸다.** 서버는 정상이다
+  ```
+  expected=2026-08-19T14:40:19.7885642+09:00   ← 첫 응답: 방금 만든 엔티티, 나노초
+  actual  =2026-08-19T05:40:19.788564Z         ← 재호출: DB 재조회, UTC·마이크로초
+  ```
+  **같은 순간이다.** `timestamptz` 왕복에서 표기(+09:00→Z)와 정밀도(나노→마이크로)가 바뀐다.
+  → 검사를 **감사 기록 1건 확인**으로 바꿨다. 멱등이 뜻하는 것은 "재호출이 세션을 다시
+  닫지 않는다"이고 타임스탬프 문자열 동일성이 아니다
+  → **알려진 잔여 사항**: 첫 close 응답의 `closedAt` 은 DB 에 저장된 값보다 정밀하다
+  (100ns 자리가 잘린다). 같은 문제가 모든 `OffsetDateTime.now()` 에 있어
+  `closedAt` 만 고치면 오히려 불일치다. 화면 영향이 없어 **보류**
+
+**스크립트 결함 4건을 고쳤다** — 전부 서버가 아니라 평가 장치의 문제였다
+
+- **F08 도달을 모델 판정 하나에 걸어뒀다** — R03 이 한 번에 UNDERSTOOD 로 나와야만 세션이
+  `AWAITING_STAFF_REVIEW` 가 됐다. 판정이 흔들리는 날엔 **F08 검증이 통째로 사라진다**(1차가 그랬다).
+  이제 판정이 무엇이든 R03 을 COMPLETE 로 몬다(재설명→recheck→직원 처리, 경로가 유한하다).
+  2차에서 attempt 2 에 풀려 직원 처리까지 가지 않았다
+- **중단되면 검증 요약이 안 찍혔다** — 실 LLM 비용을 물고도 "어딘가에서 죽었다"만 남았다.
   `trap` + `Show-Summary` 로 중간까지의 결과를 항상 출력한다
-  · **"거부됐다"만 보는 검사는 거짓말을 한다** — close 경고 검사가
+- **"거부됐다"만 보는 검사는 거짓말을 한다** — close 경고 검사가
   `WARNING_ACKNOWLEDGEMENT_REQUIRED` 가 아니라 `INVALID_STATE_TRANSITION` 으로 막혔는데
   초록으로 찍혔다. 이제 **오류 code 까지 대조**한다
+- **타임스탬프 문자열 비교** — 위 참조
+
+**비용·레이턴시** (2차, 콜드 캐시)
+
+- LLM 호출 12회 / wall 약 63초. classifier 23s·verifier 10s 가 대부분이고
+  QUESTION_PHRASE 3s / ANSWER_JUDGE 2~4s / RE_EXPLANATION 4~5s 는 전부 예산 안이다
+- Coverage 만 TRD §14 예산(12초)을 넘는다 — 기존 관측과 같다
 
 ### 다음 순서
 1. ~~F03~~ **완료** (2026-08-18). 파이프라인 + 구현체 4개 + 프롬프트 튜닝 + 실 LLM 검증(`CONS_A_001`·`CONS_A_003`)
@@ -484,7 +517,8 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
    `pendingQuestion`은 **개수가 아니라 attempt로 매칭**한다
    → `NextActionResolver.resume(...)` 신설 — 저장된 상태만으로 재개 지점을 다시 계산한다.
    규칙 8(서버가 분기 결정)을 새로고침 경로에도 적용한 것
-4. ~~Report + Close + Audit (F08)~~ **구현 완료, 실 LLM 검증 대기** (2026-08-19).
+4. ~~Report + Close + Audit (F08)~~ **완료 + 실 LLM 검증** (2026-08-19).
+   `run-understanding-eval.ps1` F04~F08 전 구간 **54/56 통과**(어긋난 2건 모두 서버 결함 아님).
    `GET /sessions/{id}/report`, `POST /sessions/{id}/close`, `audit_event` 기록 9개 지점
    → `session/CloseEligibilityEvaluator` — **리포트의 버튼 상태와 종료 요청 검증이 같은 판정을
    쓴다.** 갈라지면 버튼은 활성화됐는데 눌러보면 400 이 나온다

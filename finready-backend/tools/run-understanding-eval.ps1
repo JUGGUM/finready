@@ -396,11 +396,16 @@ $closedAgain = Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/c
     actor                = 'staff-demo'
     acknowledgedWarnings = $requiredAck
 }
-$checks.Add((Write-Check 'close 멱등' $closed.closedAt $closedAgain.closedAt))
+$checks.Add((Write-Check 'close 멱등 (상태)' $closed.sessionStatus $closedAgain.sessionStatus))
 
+# closedAt 을 비교하지 않는다. 첫 응답은 방금 만든 엔티티 값이라 +09:00 / 나노초이고,
+# 재호출 응답은 DB 에서 다시 읽어 UTC / 마이크로초다 — 같은 순간인데 표기가 다르다.
+# 애초에 멱등이 뜻하는 것은 "재호출이 세션을 다시 닫지 않는다"이고,
+# 그건 감사 기록이 한 건뿐인지로 보는 게 정확하다 (2026-08-19)
 $finalReport = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId/report"
 $checks.Add((Write-Check '종료 후 canClose' $false $finalReport.closeEligibility.canClose))
-$checks.Add((Write-Check '종료 감사 기록' $true (@($finalReport.auditEvents | ForEach-Object { $_.eventType }) -contains 'SESSION_CLOSED')))
+$closeEvents = @($finalReport.auditEvents | Where-Object { $_.eventType -eq 'SESSION_CLOSED' })
+$checks.Add((Write-Check '종료 감사 기록 1건' 1 $closeEvents.Count))
 
 $finalSnapshot = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId"
 $checks.Add((Write-Check '종료 후 resumePoint' 'S08' $finalSnapshot.resumePoint))
