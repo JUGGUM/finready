@@ -80,6 +80,15 @@ tasks.register<Test>("integrationTest") {
 }
 
 // 오프라인 평가 실행: ./gradlew evaluate
+//
+// 키는 ~/.gradle/gradle.properties 의 llmApiKey 에 둔다(권장). 저장소 밖이라 커밋될 수
+// 없고, 한 번 넣으면 IntelliJ 초록 버튼으로도 계속 먹는다.
+//
+// -PllmApiKey=... 도 동작하지만 권장하지 않는다 — 셸 히스토리와 ps 출력에 키가 남는다.
+//
+// ⚠️ IntelliJ 의 "애플리케이션" Run Configuration 에 넣은 환경변수는 Gradle 태스크에
+//    적용되지 않는다. 그 설정은 Spring Boot 실행용이고 Gradle 데몬은 별도 프로세스다.
+//    이걸 몰라 키를 넣고도 평가가 통째로 skip 된 적이 있다 (2026-08-19).
 tasks.register<Test>("evaluate") {
 	description = "Hold-out / Rule baseline 오프라인 평가. 실제 LLM을 호출한다"
 	group = "verification"
@@ -89,5 +98,17 @@ tasks.register<Test>("evaluate") {
 	useJUnitPlatform {
 		includeTags("evaluation")
 	}
+
+	// 데몬 환경 상속에 기대지 않고 명시적으로 넘긴다. 상속에 기대면 "어디에 넣어야
+	// 하는가"가 실행 방식마다 달라지고, 틀렸을 때 아무 신호가 없다
+	val llmApiKey = providers.gradleProperty("llmApiKey")
+		.orElse(providers.environmentVariable("LLM_API_KEY"))
+	environment("LLM_API_KEY", llmApiKey.getOrElse(""))
+
+	// 이 태스크의 산출물은 단언이 아니라 콘솔에 찍히는 보고서다. 안 보이면 목적이 없다
+	testLogging {
+		showStandardStreams = true
+	}
+
 	outputs.upToDateWhen { false }
 }

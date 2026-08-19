@@ -10,6 +10,10 @@ Thumbs.db
 # Environment & Secrets
 .env
 *.pem
+# Gradle 자격증명(llmApiKey 등). 키는 저장소 밖 ~/.gradle/gradle.properties 에 둔다.
+# 이 파일이 없다고 방심하면 안 된다 — 평가 실행법을 문서에 적는 순간 누군가
+# 프로젝트 gradle.properties 에 키를 적고 그대로 커밋한다
+gradle.properties
 
 # Backend (Spring Boot / Gradle)
 finready-backend/.gradle/

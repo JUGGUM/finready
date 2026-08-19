@@ -3,7 +3,6 @@ package io.finready.evaluation;
 import io.finready.ai.EvalClassifierFactory;
 import io.finready.coverage.CoverageClassifier;
 import io.finready.coverage.CoverageStatus;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -38,14 +37,49 @@ class CoverageBaselineComparisonTest {
 	private CoverageClassifier llm;
 
 	/**
-	 * 키가 없으면 <b>실패가 아니라 skip</b> 이다. 평가는 키를 가진 사람만 돌리며,
-	 * 없다고 빌드를 빨갛게 만들 이유가 없다.
+	 * 키가 없으면 <b>실패한다.</b> skip 이 아니다.
+	 *
+	 * <p>처음에는 {@code Assumptions.assumeTrue} 로 건너뛰게 했다가 되돌렸다. 실제로
+	 * 그렇게 돌려 보니 <b>4초 만에 BUILD SUCCESSFUL 이 뜨고 출력이 한 줄도 없었다.</b>
+	 * 결과 XML 에도 {@code <skipped/>} 만 남고 assumption 메시지조차 기록되지 않아,
+	 * 평가를 돌렸는데 아무 일도 일어나지 않았다는 사실을 알 방법이 없었다.
+	 *
+	 * <p>{@code evaluate} 는 CI 가 부르지 않는다 — {@code test} 만 돈다. 이 태스크를
+	 * 실행하는 것은 "평가를 하겠다"고 명시적으로 타이핑한 사람뿐이고, 그 사람에게
+	 * 조용한 초록을 돌려주는 것은 안전장치가 아니라 거짓말이다.
 	 */
 	@BeforeAll
 	void setUp() {
 		String apiKey = System.getenv("LLM_API_KEY");
-		Assumptions.assumeTrue(apiKey != null && !apiKey.isBlank(),
-				"LLM_API_KEY 가 없다 — 평가를 건너뛴다");
+
+		if (apiKey == null || apiKey.isBlank()) {
+			// 예외 메시지만으로는 콘솔에 "IllegalStateException at ...:56" 한 줄만 뜨고
+			// 조치 방법은 HTML 리포트를 열어야 보인다. 고쳐야 할 사람이 그 자리에서
+			// 읽을 수 있어야 하므로 배너를 직접 찍는다
+			System.err.println("""
+
+					┌─ 평가를 실행할 수 없다 ────────────────────────────────────────
+					│ LLM_API_KEY 가 비어 있다.
+					│
+					│ 키를 아래 중 한 곳에 넣는다.
+					│   1) ~/.gradle/gradle.properties 에  llmApiKey=sk-ant-...   ← 권장
+					│      저장소 밖이라 커밋될 수 없고, IntelliJ 초록 버튼으로도 먹는다
+					│   2) 셸 환경변수 LLM_API_KEY
+					│
+					│ ⚠ IntelliJ 의 "애플리케이션" Run Configuration 에 넣은 환경변수는
+					│   여기에 적용되지 않는다. 그 설정은 Spring Boot 실행용이고
+					│   Gradle 은 별도 프로세스다.
+					│
+					│ -PllmApiKey=... 도 동작하지만 셸 히스토리와 ps 에 키가 남는다.
+					└───────────────────────────────────────────────────────────────
+					""");
+
+			throw new IllegalStateException(
+					"LLM_API_KEY 가 없어 평가를 실행할 수 없다 (조치 방법은 위 출력 참조)");
+		}
+
+		// 키 값은 찍지 않는다(규칙 10). 길이만으로도 "설정은 됐다"는 확인은 충분하다
+		System.out.printf("LLM 분류기 준비 — 키 %d자 확인%n", apiKey.length());
 
 		llm = EvalClassifierFactory.claude(apiKey);
 	}

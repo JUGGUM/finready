@@ -90,6 +90,13 @@ springdoc은 3.x 라인이다. 2.x는 Boot 3 전용이다.
   다만 **F03부터는 통합 테스트에 Docker가 필요하다** — DB 제약(`ck_*`)·append-only 트리거·
   `updatable=false`·`@Version` 락은 실제 Postgres 없이는 검증되지 않는다.
   Testcontainers를 그때 붙인다. Render 빌드는 `Dockerfile`이 `-x test`라 영향 없다.
+- **IntelliJ Run Configuration의 환경변수는 Gradle 태스크에 적용되지 않는다.**
+  그 설정은 Spring Boot 애플리케이션 실행용이고 Gradle은 별도 프로세스다.
+  `LLM_API_KEY`를 거기 넣고 `gradlew evaluate`를 돌려 **평가가 통째로 skip됐는데
+  4초 만에 BUILD SUCCESSFUL이 떴다.** 결과 XML에도 `<skipped/>`만 남아 신호가 없었다
+  (2026-08-19). 평가용 키는 **`~/.gradle/gradle.properties`의 `llmApiKey`**에 둔다 —
+  저장소 밖이라 커밋될 수 없고 초록 버튼으로도 먹는다. `-PllmApiKey=`는 셸 히스토리와
+  `ps`에 남으므로 쓰지 않는다. 프로젝트 `gradle.properties`는 `.gitignore` 대상이다.
 - 테스트에서 실제 LLM을 호출하지 않는다. 평가 모듈만 `@Tag("evaluation")`으로 분리
 - 큰 변경 전에는 계획을 먼저 제시하고 승인을 받을 것
 - **`columnDefinition`은 `ddl-auto: validate`에 영향을 주지 않는다.** DDL 생성용이라
