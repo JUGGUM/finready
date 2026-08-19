@@ -89,7 +89,13 @@ finready:
     api-key: ${LLM_API_KEY:}            # 응답·로그 어디에도 노출 금지
     model: ${LLM_MODEL:claude-sonnet-4-6}
     base-url: ${LLM_BASE_URL:https://api.anthropic.com}
-    timeout-seconds: 30
+    # 30초였으나 실측에서 classifier 단독 23.3초가 나왔다(CONS_A_002, 2026-08-19).
+    # 여유가 6.7초인데 그 상담문은 1,400자이고 계약 상한은 8,000자다 — 더 긴 입력이
+    # 들어오면 타임아웃이다. 레이턴시는 출력 토큰에 비례하고 출력은 Risk 9개 × 인용문이라
+    # 상담문이 길수록 늘어난다. 근본 해결(classifier 배치 병렬화)은 별건이며,
+    # 그때까지 실패 모양을 "느림"으로 두기 위한 값이다.
+    # max-retries 가 1이므로 최악은 60초 × 2 = 120초임에 유의.
+    timeout-seconds: 60
     max-retries: 1                      # 1회만. 무한 재시도 금지 (TRD §7.1)
     # Sonnet 4.6은 sampling 파라미터를 받는다. Opus 4.7+ / Sonnet 5로 올리면
     # 비기본값이 400이므로 이 줄을 함께 지워야 한다
