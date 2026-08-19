@@ -282,7 +282,7 @@
     {
       "id": "ANS_R03_002",
       "riskId": "R03",
-      "answer": "조건이 맞아야 상환되는 거고, 안 맞으면 그냥 계속 가는 거네요.",
+      "answer": "6개월마다 평가일에 세 종목이 다 기준선 위에 있어야 상환되고, 하나라도 밑이면 다음으로 넘어가는 거네요.",
       "goldLabel": "UNDERSTOOD",
       "labelType": "CORRECT_INDIRECT",
       "labeledBy": {
@@ -303,6 +303,19 @@
         "agreed": true
       },
       "note": "조기상환과 중도상환(R05)을 혼동한 케이스. R03/R05 교차 오해로 별도 집계 가치 있음."
+    },
+    {
+      "id": "ANS_R03_004",
+      "riskId": "R03",
+      "answer": "조건이 맞아야 상환되는 거고, 안 맞으면 그냥 계속 가는 거네요.",
+      "goldLabel": "UNCERTAIN",
+      "labelType": "AMBIGUOUS",
+      "labeledBy": {
+        "a": "UNCERTAIN",
+        "b": "UNCERTAIN",
+        "agreed": true
+      },
+      "note": "원래 ANS_R03_002(gold=UNDERSTOOD)의 문구였다. 실 LLM 실행 2회에서 모두 UNCERTAIN 이 나왔고 근거가 같았다 — 구조는 맞게 말하지만 조건 내용(3개 기초자산 모두 배리어 이상)을 말하지 않는다. 질문이 조건을 직접 물으면 이 답은 순환적이다. 판정기가 옳다고 보고 UNCERTAIN 사례로 옮겼으며, ANS_R03_002 는 조건을 명시하는 문장으로 바꿨다 (2026-08-19)."
     }
   ],
   "datasetPlan": {
