@@ -52,7 +52,7 @@ public class AiPortConfig {
 	@Bean
 	CoverageClassifier coverageClassifier() {
 		if (gateway == null) {
-			return (transcript, risks) -> {
+			return (sessionId, transcript, risks) -> {
 				throw unconfigured("Coverage 분류기");
 			};
 		}
@@ -62,7 +62,7 @@ public class AiPortConfig {
 	@Bean
 	SemanticVerifier semanticVerifier() {
 		if (gateway == null) {
-			return (transcript, requests) -> {
+			return (sessionId, transcript, requests) -> {
 				throw unconfigured("Evidence Semantic Verifier");
 			};
 		}
@@ -77,7 +77,7 @@ public class AiPortConfig {
 	@Bean
 	QuestionGenerator questionGenerator() {
 		if (gateway == null) {
-			return seeds -> List.of();
+			return (sessionId, seeds) -> List.of();
 		}
 		return new ClaudeQuestionGenerator(gateway);
 	}
@@ -85,7 +85,7 @@ public class AiPortConfig {
 	@Bean
 	AnswerJudge answerJudge() {
 		if (gateway == null) {
-			return request -> {
+			return (sessionId, request) -> {
 				throw unconfigured("답변 판정기");
 			};
 		}
@@ -100,7 +100,7 @@ public class AiPortConfig {
 	@Bean
 	ReExplanationGenerator reExplanationGenerator() {
 		if (gateway == null) {
-			return (riskId, title, fact, sourceText, answer, level) -> null;
+			return (sessionId, riskId, title, fact, sourceText, answer, level) -> null;
 		}
 		return new ClaudeReExplainer(gateway);
 	}

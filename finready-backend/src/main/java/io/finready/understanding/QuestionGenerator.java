@@ -22,7 +22,7 @@ public interface QuestionGenerator {
 	 * 분류기({@code CoverageClassifier})가 부분 응답을 파싱 실패로 다루는 것과 다른데,
 	 * 거기는 빠진 Risk 를 채울 검수 값이 없지만 여기는 있기 때문이다.
 	 */
-	List<PhrasedQuestion> phrase(List<QuestionSeed> seeds);
+	List<PhrasedQuestion> phrase(String sessionId, List<QuestionSeed> seeds);
 
 	/**
 	 * @param baseQuestion      검수된 원문 질문. 모델은 이 의미를 벗어나면 안 된다

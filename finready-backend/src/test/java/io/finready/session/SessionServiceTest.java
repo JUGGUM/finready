@@ -3,9 +3,11 @@ package io.finready.session;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
+import io.finready.coverage.CoverageQueryService;
 import io.finready.product.CustomerProfileRepository;
 import io.finready.product.Product;
 import io.finready.product.ProductRepository;
+import io.finready.understanding.UnderstandingQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -39,6 +41,8 @@ class SessionServiceTest {
 	private ConsultationRevisionRepository revisionRepository;
 	private ProductRepository productRepository;
 	private CustomerProfileRepository customerProfileRepository;
+	private CoverageQueryService coverageQueryService;
+	private UnderstandingQueryService understandingQueryService;
 	private SessionService sessionService;
 
 	@BeforeEach
@@ -47,8 +51,11 @@ class SessionServiceTest {
 		revisionRepository = mock(ConsultationRevisionRepository.class);
 		productRepository = mock(ProductRepository.class);
 		customerProfileRepository = mock(CustomerProfileRepository.class);
+		coverageQueryService = mock(CoverageQueryService.class);
+		understandingQueryService = mock(UnderstandingQueryService.class);
 		sessionService = new SessionService(sessionRepository, revisionRepository,
-				productRepository, customerProfileRepository, new StateMachine());
+				productRepository, customerProfileRepository,
+				coverageQueryService, understandingQueryService, new StateMachine());
 	}
 
 	private Product product() {

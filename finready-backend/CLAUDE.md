@@ -379,6 +379,33 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
 - `QuestionsResponse`의 필드명은 `generationSource`가 아니라 **`source`**다(계약과 일치).
   평가 스크립트가 이걸 잘못 읽어 빈 값이 찍혔던 적이 있다
 
+### 실측한 것 (2026-08-19, 2회차 — 같은 입력으로 다른 결과)
+
+스냅샷 복구 검증을 붙여 같은 스크립트를 다시 돌렸다. **27/27 통과**(복구 8건 추가).
+그런데 **R01이 이번엔 `FALLBACK`으로 떨어졌다 — 1차와 같은 입력, 같은 프롬프트다.**
+
+- **Guardrail 부정형 목록이 좁았다.** 두 시도 모두 *"중간에 팔지 않는 것과 원금 보장은
+  별개입니다"*에서 걸렸다. `보장` 뒤 같은 절에 `않`·`아니`·`없`·`못`이 없어서다.
+  **맞는 문장인데 걸렸다** — 한국어는 부정 어미 말고 **거리를 두는 표현**으로도 같은 뜻을
+  만든다. `별개`·`다르`·`다릅`·`다른`·`달라`·`무관` 추가.
+  `다르`만 넣으면 **르 불규칙이라 `다릅니다`를 못 잡는다**
+- **1차의 "부정형 예외가 작동했다"는 과대 해석이었다.** 작동한 건 목록에 있던 한 형태
+  (`보장되지 않는다`)뿐이다. **한 번 통과를 목록 전체의 검증으로 읽으면 안 된다** —
+  같은 입력 2회 실행이 이걸 드러냈다
+- **원인 특정이 가능했던 건 `Inspection.matches()` 덕분이다.** 위반 유형만 남겼다면
+  "완곡 표현에 걸렸다"까지만 알았다. **안전장치는 자기가 왜 걸렸는지 말할 수 있어야 한다**
+- **프롬프트 `reexplain-v1` → `v2`** — R02가 걸린 숫자는 **고객이 답변에서 말한 숫자**였다.
+  오해를 반박하려고 인용한 것이라 의도는 맞지만 검수 근거에는 없다. "고객이 말한 숫자를
+  되풀이하지 말고 말로 바꿔 써라"를 규칙에 추가.
+  **Guardrail 허용 숫자에 `customerAnswer`를 더하지 않았다** — 그쪽이 쉽지만 고객이 틀린
+  숫자를 말했을 때 모델이 그대로 단언해도 통과한다.
+  fallback은 안전한 실패고, 근거 없는 숫자 단언은 아니다
+- ⚠️ **`llm_call_log.session_id`가 지금까지 전 행 NULL이었다.** 포트 5개가 전부 `null`을
+  넘겼고 컬럼이 nullable이라 **조용히 실패했다.** TRD §7.2의 "세션 단위 평가 재현"이
+  처음부터 불가능했던 것이다. 진단 SQL이 아무 행도 안 뽑아서 발견했다.
+  → **포트 시그니처에 `sessionId`를 필수 인자로 넣어 컴파일러가 강제**하게 고쳤다
+  (ThreadLocal 안 씀 — 조용히 실패하는 관측 장치는 없느니만 못하다)
+
 ### 다음 순서
 1. ~~F03~~ **완료** (2026-08-18). 파이프라인 + 구현체 4개 + 프롬프트 튜닝 + 실 LLM 검증(`CONS_A_001`·`CONS_A_003`)
    → **모델 결정됨: `claude-sonnet-4-6`** (2026-08-18, TRD D-02 해소). SDK는
@@ -399,12 +426,16 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
    `docs/decisions/2026-08-18-explained-constraint-null-hole.md` "해소됨"
 2. ~~F06 재설명 + F07 recheck·직원 처리~~ **완료 + 실 LLM 검증** (2026-08-19).
    Guardrail D-04도 해소. `tools/run-understanding-eval.ps1`로 전 구간 **19/19 통과**
-3. **`GET /sessions/{id}` 스냅샷 채우기** ← F06이 이걸 전제로 한다
-   → 계약은 "새로고침 후 `pendingQuestion`으로 같은 문구가 복구된다"고 적었는데,
-   `SessionService.getSnapshot`은 아직 `coverage=null`·`understanding=[]`를 내보낸다.
-   **재설명까지 만들어 놓고 새로고침하면 화면이 복구되지 않는다** — 심사 중 새로고침 한 번이
-   데모를 되돌린다. F08 리포트와 데이터 출처가 거의 같으니 함께 하는 게 싸다
-4. Report + Close + Audit (F08)
+3. ~~**`GET /sessions/{id}` 스냅샷 채우기**~~ **완료 + 실 LLM 검증** (2026-08-19).
+   `coverage`·`understanding`·`nextAction`을 실제로 채운다. 전 구간 **27/27 통과**
+   (F04~F07 19건 + 새로고침 복구 8건)
+   → `coverage/CoverageQueryService`(읽기 전용, LLM 없음)가 `respond(...)`를
+   `CoverageAnalysisService`의 멱등 경로와 **공유**한다 — GET과 POST 응답이 갈라질 수 없다
+   → `understanding/UnderstandingQueryService` + `RiskUnderstandingState`.
+   `pendingQuestion`은 **개수가 아니라 attempt로 매칭**한다
+   → `NextActionResolver.resume(...)` 신설 — 저장된 상태만으로 재개 지점을 다시 계산한다.
+   규칙 8(서버가 분기 결정)을 새로고침 경로에도 적용한 것
+4. Report + Close + Audit (F08) ← **다음**
    → `ConsultationSession.closedAt`·`closedBy`·`unresolvedReason`을 채우는 경로가 아직 없다
    → 리포지토리는 이제 `staff_resolution`·`re_explanation`까지 생겼다. 남은 건
    `audit_event`뿐이다
@@ -449,8 +480,10 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
 - ~~Guardrail 금칙어 최종 목록~~ — **해소** (2026-08-19, TRD D-04). 금칙어 목록 방식.
   `explanation/Guardrail`에 있고 `GuardrailTest`가 고정한다.
   **목록에 단어를 더할 때는 부정형으로 쓰이는 단어인지 먼저 볼 것** — 아니면 맞는 설명이 걸린다
-- **Guardrail 임계값 표본이 2건뿐이다** — 1회 실측에서 한 번 걸리고 한 번 통과했다(적정 신호).
-  다만 n=2라 결론은 아니다. 시나리오를 늘릴 때 `retried` 비율을 같이 볼 것
+- **Guardrail 임계값 표본이 아직 작다** — 2회 실측(각 Risk 2건)에서 매번 한 건이 걸렸다.
+  2회차는 **부정형 목록의 구멍**이었고 고쳤다. 시나리오를 늘릴 때 `retried` 비율과
+  `matches()` WARN 로그를 같이 볼 것. **목록에 단어를 더할 땐 실제 생성물에서 근거를
+  확보하고 넣는다** — 짐작으로 넣으면 이번엔 위반을 놓치는 쪽으로 틀린다
 - **캐시 TTL 결정 시 F04~F07은 고려 대상이 아니다** — 애초에 캐시가 안 걸린다(1024토큰 미만).
   TTL 논의는 Coverage 2단계에만 해당한다
 - `customerProfile` 프로덕션 시드 배치 방식 (별도 파일 vs risk schema에 병합)

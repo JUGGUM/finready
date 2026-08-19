@@ -17,7 +17,7 @@ package io.finready.understanding;
  */
 public interface AnswerJudge {
 
-	Verdict judge(JudgeRequest request);
+	Verdict judge(String sessionId, JudgeRequest request);
 
 	/**
 	 * @param fact     이 Risk 가 이해됐다고 볼 수 있는 사실. 검수된 값이다

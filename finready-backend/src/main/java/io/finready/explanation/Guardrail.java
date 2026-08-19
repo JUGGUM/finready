@@ -48,7 +48,22 @@ public class Guardrail {
 	private static final List<String> BANNED_UNLESS_NEGATED = List.of(
 			"보장", "확정", "안전", "원금은 지켜", "원금이 지켜", "문제없", "문제 없");
 
-	private static final List<String> NEGATION_MARKERS = List.of("않", "아니", "없", "못", "안 ", "말고");
+	/**
+	 * 부정만 찾으면 부족하다. 한국어는 <b>거리를 두는 표현</b>으로도 같은 뜻을 만든다.
+	 *
+	 * <p>{@code 별개}·{@code 다르}·{@code 무관} 은 실측에서 추가했다 (2026-08-19).
+	 * R01 재설명이 두 시도 모두 이 문장에서 걸려 fallback 으로 떨어졌다:
+	 *
+	 * <pre>"중간에 팔지 않는 것과 원금 보장은 별개입니다."</pre>
+	 *
+	 * "보장은 별개다"는 <b>원금이 안 지켜진다</b>는 뜻이다. 정확하고 조심스러운 문장인데
+	 * 부정어가 없다는 이유로 위반이 됐다. 목록을 늘릴 때는 반드시 실제 생성물에서 근거를
+	 * 확보할 것 — 짐작으로 넣으면 이번엔 위반을 놓치는 쪽으로 틀린다.
+	 */
+	private static final List<String> NEGATION_MARKERS =
+			List.of("않", "아니", "없", "못", "안 ", "말고",
+					// 르 불규칙이라 "다르"만으로는 "다릅니다"를 못 잡는다. 활용형을 함께 둔다
+					"별개", "다르", "다릅", "다른", "달라", "무관");
 
 	/**
 	 * 부정 표현을 찾는 범위. 절 경계(구두점)에서 끊으므로 대개 이보다 짧게 끝난다.
@@ -67,40 +82,71 @@ public class Guardrail {
 	 * @param explanation 검사할 재설명
 	 * @param evidence    허용된 근거 — {@code risk.fact} + {@code risk.sourceText} 를 이어 붙인 것.
 	 *                    여기 없는 숫자는 LLM 이 지어낸 것이다
-	 * @return 위반 목록. 비어 있으면 통과다
+	 * @return 위반 목록과 <b>무엇에 걸렸는지</b>. 비어 있으면 통과다
 	 */
-	public List<GuardrailViolation> inspect(String explanation, String evidence) {
+	public Inspection inspect(String explanation, String evidence) {
 		List<GuardrailViolation> violations = new ArrayList<>(2);
+		List<String> matches = new ArrayList<>(2);
 		if (explanation == null || explanation.isBlank()) {
-			return violations;   // 빈 응답은 파싱 단계에서 이미 걸린다
+			return new Inspection(violations, matches);   // 빈 응답은 파싱 단계에서 이미 걸린다
 		}
-		if (hasMitigatingExpression(explanation)) {
+
+		String mitigating = firstMitigatingExpression(explanation);
+		if (mitigating != null) {
 			violations.add(GuardrailViolation.MITIGATING_EXPRESSION);
+			matches.add(mitigating);
 		}
-		if (hasUnsupportedNumber(explanation, evidence)) {
+		String number = firstUnsupportedNumber(explanation, evidence);
+		if (number != null) {
 			violations.add(GuardrailViolation.UNSUPPORTED_NUMBER);
+			matches.add(number);
 		}
-		return violations;
+		return new Inspection(violations, matches);
+	}
+
+	/**
+	 * 검사 결과.
+	 *
+	 * <p>{@code matches} 는 <b>계약에 없다</b> — 응답에 싣지 않고 로그로만 쓴다.
+	 * 이게 없으면 "무엇 때문에 fallback 으로 떨어졌는지"를 알 방법이 raw_response 를
+	 * 직접 뒤지는 것뿐이라, 목록을 조정할 근거를 모을 수 없다.
+	 *
+	 * @param matches 걸린 표현(또는 숫자). 위반당 하나씩, 첫 번째 것만 담는다
+	 */
+	public record Inspection(List<GuardrailViolation> violations, List<String> matches) {
+
+		public boolean passed() {
+			return violations.isEmpty();
+		}
 	}
 
 	// ------------------------------------------------------------------
 
-	private boolean hasMitigatingExpression(String explanation) {
+	/** @return 걸린 표현. 없으면 null */
+	private String firstMitigatingExpression(String explanation) {
 		for (String banned : ALWAYS_BANNED) {
 			if (explanation.contains(banned)) {
-				return true;
+				return banned;
 			}
 		}
 		for (String banned : BANNED_UNLESS_NEGATED) {
 			int at = explanation.indexOf(banned);
 			while (at >= 0) {
 				if (!isNegatedAfter(explanation, at + banned.length())) {
-					return true;
+					// 어느 문맥에서 걸렸는지가 목록 조정의 근거다 — 단어만으로는 판단할 수 없다
+					return banned + " (" + snippetAround(explanation, at, banned.length()) + ")";
 				}
 				at = explanation.indexOf(banned, at + banned.length());
 			}
 		}
-		return false;
+		return null;
+	}
+
+	/** 걸린 지점 앞뒤를 잘라 로그에 남긴다 */
+	private String snippetAround(String text, int at, int length) {
+		int from = Math.max(0, at - 10);
+		int to = Math.min(text.length(), at + length + NEGATION_WINDOW);
+		return text.substring(from, to).replace('\n', ' ');
 	}
 
 	/** 같은 절 안에서만 부정 표현을 찾는다 */
@@ -119,15 +165,17 @@ public class Guardrail {
 	 *
 	 * <p>값으로 비교한다 — {@code 0.80} 과 {@code 0.8} 은 같은 숫자다. 문자열로 비교하면
 	 * 표기만 다른 정확한 숫자가 "지어낸 숫자"로 걸린다.
+	 *
+	 * @return 근거에 없는 첫 숫자. 없으면 null
 	 */
-	private boolean hasUnsupportedNumber(String explanation, String evidence) {
+	private String firstUnsupportedNumber(String explanation, String evidence) {
 		Set<BigDecimal> allowed = numbersIn(evidence);
 		for (BigDecimal used : numbersIn(explanation)) {
 			if (!allowed.contains(used)) {
-				return true;
+				return used.toPlainString();
 			}
 		}
-		return false;
+		return null;
 	}
 
 	private Set<BigDecimal> numbersIn(String text) {

@@ -117,9 +117,9 @@ class ClaudeSemanticVerifier implements SemanticVerifier {
 	}
 
 	@Override
-	public List<RelationVerdict> verify(String transcript, List<VerificationRequest> requests) {
+	public List<RelationVerdict> verify(String sessionId, String transcript, List<VerificationRequest> requests) {
 		AiGateway.AiCall call = new AiGateway.AiCall(
-				null,
+				sessionId,
 				STAGE,
 				PROMPT_VERSION,
 				SYSTEM_PROMPT,

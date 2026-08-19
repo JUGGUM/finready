@@ -50,6 +50,7 @@ public class CoverageAnalysisService {
 	private final CoverageResultFactory coverageResultFactory;
 	private final GateEvaluator gateEvaluator;
 	private final CoverageWriter writer;
+	private final CoverageQueryService queryService;
 	private final StateMachine stateMachine;
 
 	public CoverageAnalysisService(ConsultationSessionRepository sessionRepository,
@@ -63,6 +64,7 @@ public class CoverageAnalysisService {
 	                               CoverageResultFactory coverageResultFactory,
 	                               GateEvaluator gateEvaluator,
 	                               CoverageWriter writer,
+	                               CoverageQueryService queryService,
 	                               StateMachine stateMachine) {
 		this.sessionRepository = sessionRepository;
 		this.revisionRepository = revisionRepository;
@@ -75,6 +77,7 @@ public class CoverageAnalysisService {
 		this.coverageResultFactory = coverageResultFactory;
 		this.gateEvaluator = gateEvaluator;
 		this.writer = writer;
+		this.queryService = queryService;
 		this.stateMachine = stateMachine;
 	}
 
@@ -198,7 +201,7 @@ public class CoverageAnalysisService {
 				.toList();
 
 		long classifierStart = System.nanoTime();
-		List<CoverageClassifier.RiskVerdict> verdicts = classifier.classify(transcript, prompts);
+		List<CoverageClassifier.RiskVerdict> verdicts = classifier.classify(sessionId, transcript, prompts);
 		long classifierMs = elapsedMs(classifierStart);
 
 		Map<String, CoverageClassifier.RiskVerdict> verdictsById =
@@ -218,7 +221,7 @@ public class CoverageAnalysisService {
 		long verifierStart = System.nanoTime();
 		Map<String, SemanticVerifier.RelationVerdict> relationsById = verifierTargets.isEmpty()
 				? Map.of()
-				: indexExactly(semanticVerifier.verify(transcript, verifierTargets),
+				: indexExactly(semanticVerifier.verify(sessionId, transcript, verifierTargets),
 						SemanticVerifier.RelationVerdict::riskId, verifierTargets.size(),
 						verifierTargets.stream()
 								.map(SemanticVerifier.VerificationRequest::riskId)
@@ -350,17 +353,18 @@ public class CoverageAnalysisService {
 				: SessionStatus.GATE_BLOCKED;
 	}
 
+	/**
+	 * 응답 조립은 {@link CoverageQueryService} 가 한다 — {@code GET /sessions/{id}} 의
+	 * {@code coverage} 필드와 같은 코드를 타게 하려는 것이다. 둘이 갈라지면 새로고침 결과가
+	 * 분석 직후 결과와 달라진다.
+	 */
 	private CoverageResponse respond(SessionStatus status,
 	                                 String sessionId,
 	                                 Long revisionId,
 	                                 List<CoverageResult> results,
 	                                 Map<String, ProductRisk> risksById,
 	                                 CoverageResponse.AnalysisView analysis) {
-		Map<String, GateOverride> overrides = loadOverrides(sessionId);
-		GateEvaluator.GateVerdict verdict =
-				gateEvaluator.evaluate(results, policiesOf(risksById), overrides.keySet());
-		return CoverageResponse.of(sessionId, revisionId, status, verdict, results,
-				risksById, overrides, analysis);
+		return queryService.respond(status, sessionId, revisionId, results, risksById, analysis);
 	}
 
 	/**

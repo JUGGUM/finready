@@ -76,9 +76,9 @@ class ClaudeAnswerJudge implements AnswerJudge {
 	}
 
 	@Override
-	public Verdict judge(JudgeRequest request) {
+	public Verdict judge(String sessionId, JudgeRequest request) {
 		AiGateway.AiCall call = new AiGateway.AiCall(
-				null,
+				sessionId,
 				STAGE,
 				PROMPT_VERSION,
 				SYSTEM_PROMPT,

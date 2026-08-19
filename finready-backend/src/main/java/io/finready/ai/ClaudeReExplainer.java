@@ -16,8 +16,12 @@ import tools.jackson.databind.JsonNode;
  */
 class ClaudeReExplainer implements ReExplanationGenerator {
 
-	/** 프롬프트를 고치면 반드시 올린다 (TRD §7.2) */
-	private static final String PROMPT_VERSION = "reexplain-v1";
+	/**
+	 * 프롬프트를 고치면 반드시 올린다 (TRD §7.2).
+	 * v2: 고객이 말한 숫자를 되풀이하지 말라는 규칙 추가 — 실측에서 UNSUPPORTED_NUMBER
+	 * 재생성의 주된 원인이었다 (2026-08-19)
+	 */
+	private static final String PROMPT_VERSION = "reexplain-v2";
 	private static final String STAGE = "RE_EXPLANATION";
 
 	/**
@@ -38,6 +42,9 @@ class ClaudeReExplainer implements ReExplanationGenerator {
 			   덧붙이지 않는다.
 			2. **숫자는 주어진 사실과 원문에 있는 것만 쓴다.** 없는 숫자를 만들지 않으며,
 			   확실하지 않으면 숫자를 아예 쓰지 않는다.
+			   **고객이 말한 숫자를 되풀이하지 않는다.** 고객의 오해를 반박할 때도 그 숫자를
+			   그대로 옮기지 말고 말로 바꿔 쓴다.
+			   예: "10~20%로 제한되지 않습니다" (X) → "손실 폭에 상한이 없습니다" (O)
 			3. **위험을 축소하지 않는다.** "사실상", "거의 없다", "드물다", "걱정 안 하셔도",
 			   "안전하다" 같은 표현을 쓰지 않는다. 확률이 낮아 보여도 그렇게 말하지 않는다.
 			4. **가입을 권유하지 않는다.** 추천하거나 좋은 기회라고 말하지 않는다.
@@ -67,7 +74,8 @@ class ClaudeReExplainer implements ReExplanationGenerator {
 	}
 
 	@Override
-	public String explain(String riskId,
+	public String explain(String sessionId,
+	                      String riskId,
 	                      String riskTitle,
 	                      String riskFact,
 	                      String sourceText,
@@ -75,7 +83,7 @@ class ClaudeReExplainer implements ReExplanationGenerator {
 	                      String explanationLevel) {
 
 		AiGateway.AiCall call = new AiGateway.AiCall(
-				null,
+				sessionId,
 				STAGE,
 				PROMPT_VERSION,
 				SYSTEM_PROMPT,

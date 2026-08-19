@@ -36,7 +36,7 @@ class GuardrailTest {
 			String explanation = "이 상품은 원금이 보장되지 않습니다. "
 					+ "만기에 기초자산이 기준가격의 65% 미만이면 원금 손실이 발생합니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
@@ -44,7 +44,7 @@ class GuardrailTest {
 		void negatedFixedIsNotViolation() {
 			String explanation = "지수가 잠시 내려가도 그것만으로 손실이 확정되지 않습니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
@@ -52,7 +52,7 @@ class GuardrailTest {
 		void negatedFurtherAwayIsNotViolation() {
 			String explanation = "낙인이 없다는 것은 원금 보장을 의미하지 않습니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
@@ -60,8 +60,28 @@ class GuardrailTest {
 		void affirmativeGuaranteeIsViolation() {
 			String explanation = "이 상품은 원금이 보장됩니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.containsExactly(GuardrailViolation.MITIGATING_EXPRESSION);
+		}
+
+		/**
+		 * 실측에서 나온 문장이다 (2026-08-19). R01 재설명이 두 시도 모두 여기서 걸려
+		 * fallback 으로 떨어졌다 — "보장은 별개다"가 부정어 없이 부정을 뜻하기 때문이다.
+		 */
+		@Test
+		@DisplayName("'원금 보장은 별개입니다'는 위반이 아니다 — 실제 오탐 사례")
+		void distancingExpressionIsNotViolation() {
+			String explanation = "만기까지 보유하셔도 원금을 받지 못하실 수 있습니다. "
+					+ "중간에 팔지 않는 것과 원금 보장은 별개입니다.";
+
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
+		}
+
+		@Test
+		@DisplayName("'보장과 다릅니다'·'보장과 무관합니다'도 위반이 아니다")
+		void otherDistancingFormsAreNotViolations() {
+			assertThat(guardrail.inspect("이것은 원금 보장과 다릅니다.", EVIDENCE).violations()).isEmpty();
+			assertThat(guardrail.inspect("낙인 구조는 원금 보장과 무관합니다.", EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
@@ -71,7 +91,7 @@ class GuardrailTest {
 			// 놓치는 쪽이 더 위험하다 — 고객이 잘못된 문장을 그대로 읽는다
 			String explanation = "원금은 보장됩니다. 손실이 날 일은 없습니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.contains(GuardrailViolation.MITIGATING_EXPRESSION);
 		}
 	}
@@ -85,7 +105,7 @@ class GuardrailTest {
 		void practicallyIsAlwaysViolation() {
 			String explanation = "노낙인이라 사실상 원금은 지켜진다고 보셔도 됩니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.contains(GuardrailViolation.MITIGATING_EXPRESSION);
 		}
 
@@ -94,7 +114,7 @@ class GuardrailTest {
 		void rareIsViolation() {
 			String explanation = "세 지수가 동시에 반토막 날 가능성은 거의 없습니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.contains(GuardrailViolation.MITIGATING_EXPRESSION);
 		}
 
@@ -103,7 +123,7 @@ class GuardrailTest {
 		void recommendationIsViolation() {
 			String explanation = "지금 가입하시는 게 좋은 기회입니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.contains(GuardrailViolation.MITIGATING_EXPRESSION);
 		}
 	}
@@ -117,7 +137,7 @@ class GuardrailTest {
 		void supportedNumberPasses() {
 			String explanation = "기초자산이 최초기준가격의 65% 미만이면 손실이 발생합니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
@@ -125,7 +145,7 @@ class GuardrailTest {
 		void unsupportedNumberIsViolation() {
 			String explanation = "최대 손실률은 마이너스 100%입니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE))
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 					.containsExactly(GuardrailViolation.UNSUPPORTED_NUMBER);
 		}
 
@@ -135,13 +155,30 @@ class GuardrailTest {
 			// 문자열로 비교하면 정확한 숫자가 '지어낸 숫자'로 걸린다
 			String explanation = "총 보수는 연 0.8%입니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 
 		@Test
 		@DisplayName("자릿수 쉼표가 있어도 값으로 비교한다")
 		void thousandSeparatorIsNormalized() {
-			assertThat(guardrail.inspect("1,000만원을 넣으셨다면", "1000만원 기준")).isEmpty();
+			assertThat(guardrail.inspect("1,000만원을 넣으셨다면", "1000만원 기준").violations()).isEmpty();
+		}
+
+		/**
+		 * 실측 사례 (2026-08-19). 모델이 고객의 오해("한 10퍼센트, 20퍼센트")를 반박하려고
+		 * 그 숫자를 인용했다.
+		 *
+		 * <p><b>이건 의도된 동작이다.</b> 고객 답변을 허용 근거에 넣으면 모델이 고객의 틀린
+		 * 숫자를 사실로 단언해도 막지 못한다 — fallback 은 안전하지만 틀린 숫자는 안전하지 않다.
+		 * 대신 {@code reexplain-v2} 프롬프트가 "고객이 말한 숫자를 되풀이하지 말라"고 지시한다.
+		 */
+		@Test
+		@DisplayName("고객이 말한 숫자를 인용해도 위반이다 — 근거에 없으면 없는 것이다")
+		void quotingCustomerNumberIsStillViolation() {
+			String explanation = "이 상품의 손실은 10~20%로 제한되지 않습니다.";
+
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
+					.contains(GuardrailViolation.UNSUPPORTED_NUMBER);
 		}
 
 		@Test
@@ -149,7 +186,7 @@ class GuardrailTest {
 		void noNumberIsNotViolation() {
 			String explanation = "원금이 보장되지 않으며 손실이 발생할 수 있습니다.";
 
-			assertThat(guardrail.inspect(explanation, EVIDENCE)).isEmpty();
+			assertThat(guardrail.inspect(explanation, EVIDENCE).violations()).isEmpty();
 		}
 	}
 
@@ -158,7 +195,7 @@ class GuardrailTest {
 	void bothViolations() {
 		String explanation = "손실 확률은 사실상 5% 수준입니다.";
 
-		assertThat(guardrail.inspect(explanation, EVIDENCE))
+		assertThat(guardrail.inspect(explanation, EVIDENCE).violations())
 				.containsExactlyInAnyOrder(
 						GuardrailViolation.MITIGATING_EXPRESSION,
 						GuardrailViolation.UNSUPPORTED_NUMBER);
@@ -167,7 +204,55 @@ class GuardrailTest {
 	@Test
 	@DisplayName("빈 응답은 파싱 단계가 잡는다 — 여기서는 위반으로 세지 않는다")
 	void blankIsNotInspected() {
-		assertThat(guardrail.inspect("  ", EVIDENCE)).isEmpty();
-		assertThat(guardrail.inspect(null, EVIDENCE)).isEmpty();
+		assertThat(guardrail.inspect("  ", EVIDENCE).violations()).isEmpty();
+		assertThat(guardrail.inspect(null, EVIDENCE).violations()).isEmpty();
+	}
+
+	/**
+	 * 무엇에 걸렸는지 남기지 않으면 목록을 조정할 근거가 없다. 실제로 R01 재설명이 fallback 으로
+	 * 떨어졌는데 원인을 알 수 없어 이 기능을 넣었다 (2026-08-19).
+	 */
+	@Nested
+	@DisplayName("무엇에 걸렸는지 남긴다")
+	class Diagnostics {
+
+		@Test
+		@DisplayName("걸린 표현과 그 앞뒤 문맥을 함께 준다")
+		void reportsMatchedExpressionWithContext() {
+			Guardrail.Inspection inspection =
+					guardrail.inspect("노낙인이라 사실상 안심하셔도 됩니다.", EVIDENCE);
+
+			assertThat(inspection.passed()).isFalse();
+			assertThat(inspection.matches()).singleElement().asString().contains("사실상");
+		}
+
+		@Test
+		@DisplayName("부정형 예외에 걸린 경우 문맥이 함께 나온다 — 단어만으로는 판단할 수 없다")
+		void reportsContextForNegationCandidates() {
+			Guardrail.Inspection inspection =
+					guardrail.inspect("원금이 보장된다고 이해하셨다면, 그것은 사실과 다릅니다.", EVIDENCE);
+
+			assertThat(inspection.matches()).singleElement().asString()
+					.contains("보장")
+					.contains("이해하셨다면");
+		}
+
+		@Test
+		@DisplayName("근거에 없는 숫자는 그 숫자를 준다")
+		void reportsUnsupportedNumber() {
+			Guardrail.Inspection inspection = guardrail.inspect("최대 손실은 -100%입니다.", EVIDENCE);
+
+			assertThat(inspection.matches()).containsExactly("100");
+		}
+
+		@Test
+		@DisplayName("통과하면 아무것도 남기지 않는다")
+		void passingLeavesNothing() {
+			Guardrail.Inspection inspection =
+					guardrail.inspect("원금이 보장되지 않습니다.", EVIDENCE);
+
+			assertThat(inspection.passed()).isTrue();
+			assertThat(inspection.matches()).isEmpty();
+		}
 	}
 }

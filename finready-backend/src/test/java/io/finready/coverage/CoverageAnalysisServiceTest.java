@@ -61,13 +61,18 @@ class CoverageAnalysisServiceTest {
 
 	@BeforeEach
 	void setUp() {
+		// 조회 서비스는 목이 아니라 실물이다 — 응답 조립과 Gate 재판정이 여기 있어서,
+		// 목으로 바꾸면 이 테스트가 검사하는 것이 통째로 사라진다
 		service = new CoverageAnalysisService(
 				sessionRepository, revisionRepository, productRiskRepository,
 				coverageResultRepository, gateOverrideRepository,
 				classifier, semanticVerifier,
 				new ProvenanceVerifier(15, 300),
 				new CoverageResultFactory(new CoverageStatusResolver()),
-				new GateEvaluator(), writer, new StateMachine());
+				new GateEvaluator(), writer,
+				new CoverageQueryService(revisionRepository, coverageResultRepository,
+						productRiskRepository, gateOverrideRepository, new GateEvaluator()),
+				new StateMachine());
 
 		when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session(SessionStatus.DRAFT)));
 		when(revisionRepository.findTopBySessionIdOrderByRevisionNoDesc(SESSION_ID))
@@ -261,7 +266,7 @@ class CoverageAnalysisServiceTest {
 
 			service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
 
-			verify(semanticVerifier, never()).verify(anyString(), anyList());
+			verify(semanticVerifier, never()).verify(anyString(), anyString(), anyList());
 		}
 	}
 
@@ -288,8 +293,8 @@ class CoverageAnalysisServiceTest {
 
 			CoverageResponse response = service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
 
-			verify(classifier, never()).classify(anyString(), anyList());
-			verify(semanticVerifier, never()).verify(anyString(), anyList());
+			verify(classifier, never()).classify(anyString(), anyString(), anyList());
+			verify(semanticVerifier, never()).verify(anyString(), anyString(), anyList());
 			assertThat(response.blockingRiskIds()).containsExactly("R02");
 			// 이번 호출에서 잰 레이턴시가 없다. 0을 넣으면 "0ms에 끝났다"로 읽힌다
 			assertThat(response.analysis()).isNull();
@@ -377,7 +382,7 @@ class CoverageAnalysisServiceTest {
 
 			assertThat(errorCodeOf(() -> service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest())))
 					.isEqualTo(ErrorCode.INVALID_STATE_TRANSITION);
-			verify(classifier, never()).classify(anyString(), anyList());
+			verify(classifier, never()).classify(anyString(), anyString(), anyList());
 		}
 
 		@Test
@@ -396,7 +401,7 @@ class CoverageAnalysisServiceTest {
 			service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest());
 
 			ArgumentCaptor<List<CoverageClassifier.RiskPrompt>> captor = captor();
-			verify(classifier).classify(anyString(), captor.capture());
+			verify(classifier).classify(anyString(), anyString(), captor.capture());
 			assertThat(captor.getValue())
 					.extracting(CoverageClassifier.RiskPrompt::riskId)
 					.containsExactly("R01", "R02", "R05");
@@ -497,16 +502,16 @@ class CoverageAnalysisServiceTest {
 	// ------------------------------------------------------------------
 
 	private void classifierReturns(CoverageClassifier.RiskVerdict... verdicts) {
-		when(classifier.classify(anyString(), anyList())).thenReturn(List.of(verdicts));
+		when(classifier.classify(anyString(), anyString(), anyList())).thenReturn(List.of(verdicts));
 	}
 
 	private void verifierReturns(SemanticVerifier.RelationVerdict... relations) {
-		when(semanticVerifier.verify(anyString(), anyList())).thenReturn(List.of(relations));
+		when(semanticVerifier.verify(anyString(), anyString(), anyList())).thenReturn(List.of(relations));
 	}
 
 	private List<SemanticVerifier.VerificationRequest> capturedVerifierTargets() {
 		ArgumentCaptor<List<SemanticVerifier.VerificationRequest>> captor = captor();
-		verify(semanticVerifier).verify(anyString(), captor.capture());
+		verify(semanticVerifier).verify(anyString(), anyString(), captor.capture());
 		return captor.getValue();
 	}
 

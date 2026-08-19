@@ -71,7 +71,7 @@ class CoverageWiringIntegrationTest extends AbstractPostgresIntegrationTest {
 	@Test
 	@DisplayName("분류기 스텁은 호출되면 설정 누락을 명시적으로 알린다")
 	void classifierStubFailsLoudly() {
-		Throwable thrown = catchThrowable(() -> classifier.classify("상담 원문", List.of()));
+		Throwable thrown = catchThrowable(() -> classifier.classify("S-1", "상담 원문", List.of()));
 
 		assertThat(thrown)
 				.isInstanceOf(IllegalStateException.class)
@@ -81,7 +81,7 @@ class CoverageWiringIntegrationTest extends AbstractPostgresIntegrationTest {
 	@Test
 	@DisplayName("Verifier 스텁도 마찬가지다 — 빈 결과를 돌려주지 않는다")
 	void verifierStubFailsLoudly() {
-		Throwable thrown = catchThrowable(() -> semanticVerifier.verify("상담 원문", List.of()));
+		Throwable thrown = catchThrowable(() -> semanticVerifier.verify("S-1", "상담 원문", List.of()));
 
 		assertThat(thrown)
 				.isInstanceOf(IllegalStateException.class)

@@ -27,7 +27,7 @@ public interface SemanticVerifier {
 	 *
 	 * @param transcript revision 원문. 인용 구간만 보내면 앞뒤 맥락이 잘려 반대 의미를 놓친다
 	 */
-	List<RelationVerdict> verify(String transcript, List<VerificationRequest> requests);
+	List<RelationVerdict> verify(String sessionId, String transcript, List<VerificationRequest> requests);
 
 	/**
 	 * 이 구현이 쓰는 프롬프트 버전 (TRD §7.2). 분류기와 따로 관리한다 — 한쪽만 고치는 일이

@@ -128,18 +128,20 @@ public class ReExplanationService {
 		boolean retried = false;
 
 		for (int attempt = 1; attempt <= 2; attempt++) {
-			String candidate = callGenerator(risk, customerAnswer, explanationLevel);
+			String candidate = callGenerator(session.getId(), risk, customerAnswer, explanationLevel);
 			if (candidate == null || candidate.isBlank()) {
 				break;
 			}
-			violations = guardrail.inspect(candidate, evidence);
-			if (violations.isEmpty()) {
+			Guardrail.Inspection inspection = guardrail.inspect(candidate, evidence);
+			if (inspection.passed()) {
 				return new ReExplanation(session.getId(), risk.getRiskId(),
 						risk.getSourcePage(), risk.getSourceText(), candidate,
 						GenerationSource.LLM, retried, null);
 			}
-			log.warn("Guardrail 위반 — riskId={}, attempt={}, violations={}",
-					risk.getRiskId(), attempt, violations);
+			violations = inspection.violations();
+			// 무엇에 걸렸는지를 남긴다. 이게 없으면 목록이 너무 빡빡한지 판단할 근거가 없다
+			log.warn("Guardrail 위반 — riskId={}, attempt={}, violations={}, matched={}",
+					risk.getRiskId(), attempt, violations, inspection.matches());
 			retried = true;
 		}
 
@@ -152,9 +154,10 @@ public class ReExplanationService {
 	 * 생성 실패는 흐름을 막지 않는다 — 검수된 {@code fallbackPlainExplanation} 이 있으므로
 	 * 여기서 던지면 재설명 화면 자체를 못 띄운다. F04 의 질문 생성과 같은 판단이다.
 	 */
-	private String callGenerator(ProductRisk risk, String customerAnswer, String explanationLevel) {
+	private String callGenerator(String sessionId, ProductRisk risk,
+	                             String customerAnswer, String explanationLevel) {
 		try {
-			return generator.explain(risk.getRiskId(), risk.getTitle(), risk.getFact(),
+			return generator.explain(sessionId, risk.getRiskId(), risk.getTitle(), risk.getFact(),
 					risk.getSourceText(), customerAnswer, explanationLevel);
 		} catch (RuntimeException ex) {
 			log.warn("재설명 생성 실패. 검수 문장으로 대체한다 (riskId={})", risk.getRiskId(), ex);

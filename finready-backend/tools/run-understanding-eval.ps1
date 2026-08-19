@@ -220,10 +220,28 @@ Write-Step '5) GET /sessions/{id} — 새로고침 복구'
 $snapshot = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId"
 Write-Host ("  sessionStatus = {0}" -f $snapshot.sessionStatus) -ForegroundColor Gray
 Write-Host ("  resumePoint   = {0}" -f $snapshot.resumePoint) -ForegroundColor Gray
-Write-Host ("  understanding = {0} 건" -f @($snapshot.understanding).Count) -ForegroundColor Gray
-if (@($snapshot.understanding).Count -eq 0) {
-    Write-Host '  ! understanding 이 비어 있다 — 새로고침하면 화면이 복구되지 않는다 (알려진 구멍)' -ForegroundColor Yellow
+Write-Host ("  nextAction    = {0}" -f $snapshot.nextAction) -ForegroundColor Gray
+
+$checks.Add((Write-Check 'coverage 복구' $coverage.gateStatus $snapshot.coverage.gateStatus))
+$checks.Add((Write-Check 'coverage risks' 9 @($snapshot.coverage.risks).Count))
+$checks.Add((Write-Check 'understanding 건수' 3 @($snapshot.understanding).Count))
+
+# R01·R02 는 끝났고 R03 만 미답변이므로, 복구는 R03 의 attempt 1 질문을 가리켜야 한다
+foreach ($state in $snapshot.understanding) {
+    $pending = '-'
+    if ($null -ne $state.pendingQuestion) { $pending = "attempt $($state.pendingQuestion.attempt)" }
+    Write-Host ("  {0} workflow={1,-24} disposition={2,-18} pending={3} attempts={4}" -f `
+        $state.riskId, $state.workflowStatus, $state.finalDisposition, $pending, @($state.attempts).Count) -ForegroundColor Gray
 }
+
+$r01State = $snapshot.understanding | Where-Object { $_.riskId -eq 'R01' }
+$r02State = $snapshot.understanding | Where-Object { $_.riskId -eq 'R02' }
+$checks.Add((Write-Check 'R01 attempts 보존' 2 @($r01State.attempts).Count))
+$checks.Add((Write-Check 'R01 pending 없음' $null $r01State.pendingQuestion))
+$checks.Add((Write-Check 'R02 직원처리 보존' 'RESOLVED_BY_STAFF' $r02State.staffResolution.disposition))
+# 규칙 1 — 직원이 해결해도 AI 원판정은 리포트에 남는다
+$checks.Add((Write-Check 'R02 AI판정 보존' 'MISUNDERSTOOD' $r02State.attempts[-1].aiStatus))
+$checks.Add((Write-Check 'nextAction 복구' 'NEXT_RISK' $snapshot.nextAction))
 
 # ---------------------------------------------------------------- 결과
 $passed = @($checks | Where-Object { $_ }).Count

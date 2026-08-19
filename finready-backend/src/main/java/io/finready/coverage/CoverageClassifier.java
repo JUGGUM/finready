@@ -24,7 +24,7 @@ public interface CoverageClassifier {
 	 * {@code coveragePolicy != NOT_APPLICABLE} 인 Risk 전체를 <b>1회 batch call</b> 로 분류한다.
 	 * Risk 마다 호출하면 9배의 요금과 레이턴시가 든다.
 	 */
-	List<RiskVerdict> classify(String transcript, List<RiskPrompt> risks);
+	List<RiskVerdict> classify(String sessionId, String transcript, List<RiskPrompt> risks);
 
 	/**
 	 * 이 구현이 쓰는 프롬프트 버전. <b>Hold-out 재현 조건</b>이라(TRD §7.2) 응답의

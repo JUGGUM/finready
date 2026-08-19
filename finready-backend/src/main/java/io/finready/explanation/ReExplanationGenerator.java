@@ -10,6 +10,8 @@ package io.finready.explanation;
 public interface ReExplanationGenerator {
 
 	/**
+	 * @param sessionId      {@code llm_call_log} 에 남길 세션. <b>관측용이며 프롬프트에 넣지 않는다</b> —
+	 *                       이 값이 없으면 어느 상담의 호출인지 알 수 없어 평가 재현이 불가능하다 (TRD §7.2)
 	 * @param riskTitle      항목명
 	 * @param riskFact       검수된 사실. 재설명이 전달해야 할 내용이다
 	 * @param sourceText     상품설명서 원문. 숫자의 출처이기도 하다
@@ -17,7 +19,8 @@ public interface ReExplanationGenerator {
 	 * @param explanationLevel 고객 프로필의 설명 수준. null 이면 기본 수준으로 쓴다
 	 * @return 재설명 본문. 빈 값이면 호출부가 fallback 으로 처리한다
 	 */
-	String explain(String riskId,
+	String explain(String sessionId,
+	               String riskId,
 	               String riskTitle,
 	               String riskFact,
 	               String sourceText,

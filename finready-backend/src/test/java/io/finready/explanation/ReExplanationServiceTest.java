@@ -87,7 +87,7 @@ class ReExplanationServiceTest {
 		@Test
 		@DisplayName("Guardrail 을 통과하면 LLM 결과를 그대로 쓴다")
 		void passesGuardrail() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("원금이 보장되지 않습니다. 기준가격의 65% 미만이면 손실이 발생합니다.");
 
 			ReExplanationResponse response = service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
@@ -95,13 +95,13 @@ class ReExplanationServiceTest {
 			assertThat(response.source()).isEqualTo(GenerationSource.LLM);
 			assertThat(response.guardrail().retried()).isFalse();
 			assertThat(response.guardrail().violations()).isEmpty();
-			verify(generator, times(1)).explain(any(), any(), any(), any(), any(), any());
+			verify(generator, times(1)).explain(any(), any(), any(), any(), any(), any(), any());
 		}
 
 		@Test
 		@DisplayName("응답에 S06 좌·우가 모두 실린다 — 고객 답변과 실제 사실")
 		void carriesBothSidesOfTheScreen() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("원금이 보장되지 않습니다.");
 
 			ReExplanationResponse response = service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
@@ -114,7 +114,7 @@ class ReExplanationServiceTest {
 		@Test
 		@DisplayName("재설명 후 nextAction 은 항상 RECHECK 다")
 		void nextActionIsAlwaysRecheck() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("원금이 보장되지 않습니다.");
 
 			ReExplanationResponse response = service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
@@ -131,19 +131,19 @@ class ReExplanationServiceTest {
 		@Test
 		@DisplayName("위반이면 1회만 재생성한다")
 		void retriesOnce() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("사실상 원금은 지켜집니다.");
 
 			service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
 
 			// TRD §7.1 "1회만" — 무한 재생성이 되면 요금과 지연이 통제되지 않는다
-			verify(generator, times(2)).explain(any(), any(), any(), any(), any(), any());
+			verify(generator, times(2)).explain(any(), any(), any(), any(), any(), any(), any());
 		}
 
 		@Test
 		@DisplayName("재생성도 실패하면 검수된 문장으로 대체하고 FALLBACK 으로 표시한다")
 		void fallsBackToVerifiedText() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("사실상 원금은 지켜집니다.");
 
 			ReExplanationResponse response = service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
@@ -158,7 +158,7 @@ class ReExplanationServiceTest {
 		@Test
 		@DisplayName("재생성이 통과하면 그 결과를 쓴다 — retried 만 true 다")
 		void secondAttemptCanPass() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenReturn("사실상 원금은 지켜집니다.")
 					.thenReturn("원금이 보장되지 않습니다.");
 
@@ -172,7 +172,7 @@ class ReExplanationServiceTest {
 		@Test
 		@DisplayName("생성 자체가 실패해도 흐름을 막지 않는다 — 검수 문장이 있다")
 		void generatorFailureFallsBack() {
-			when(generator.explain(any(), any(), any(), any(), any(), any()))
+			when(generator.explain(any(), any(), any(), any(), any(), any(), any()))
 					.thenThrow(new IllegalStateException("LLM 없음"));
 
 			ReExplanationResponse response = service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID));
@@ -198,7 +198,7 @@ class ReExplanationServiceTest {
 
 			assertThat(response.explanation()).isEqualTo("이미 저장된 설명");
 			// 새로고침이 요금을 다시 물면 안 된다
-			verify(generator, never()).explain(any(), any(), any(), any(), any(), any());
+			verify(generator, never()).explain(any(), any(), any(), any(), any(), any(), any());
 			verify(writer, never()).save(any());
 		}
 
@@ -233,7 +233,7 @@ class ReExplanationServiceTest {
 					() -> service.reExplain(SESSION_ID, new ReExplainRequest(RISK_ID)));
 
 			assertThat(thrown.code()).isEqualTo(ErrorCode.INVALID_STATE_TRANSITION);
-			verify(generator, never()).explain(any(), any(), any(), any(), any(), any());
+			verify(generator, never()).explain(any(), any(), any(), any(), any(), any(), any());
 		}
 
 		@Test

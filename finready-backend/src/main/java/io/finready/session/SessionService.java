@@ -3,9 +3,13 @@ package io.finready.session;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
+import io.finready.coverage.CoverageQueryService;
 import io.finready.product.CustomerProfileRepository;
 import io.finready.product.Product;
 import io.finready.product.ProductRepository;
+import io.finready.understanding.NextAction;
+import io.finready.understanding.RiskUnderstandingState;
+import io.finready.understanding.UnderstandingQueryService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,17 +30,23 @@ public class SessionService {
 	private final ConsultationRevisionRepository revisionRepository;
 	private final ProductRepository productRepository;
 	private final CustomerProfileRepository customerProfileRepository;
+	private final CoverageQueryService coverageQueryService;
+	private final UnderstandingQueryService understandingQueryService;
 	private final StateMachine stateMachine;
 
 	public SessionService(ConsultationSessionRepository sessionRepository,
 	                      ConsultationRevisionRepository revisionRepository,
 	                      ProductRepository productRepository,
 	                      CustomerProfileRepository customerProfileRepository,
+	                      CoverageQueryService coverageQueryService,
+	                      UnderstandingQueryService understandingQueryService,
 	                      StateMachine stateMachine) {
 		this.sessionRepository = sessionRepository;
 		this.revisionRepository = revisionRepository;
 		this.productRepository = productRepository;
 		this.customerProfileRepository = customerProfileRepository;
+		this.coverageQueryService = coverageQueryService;
+		this.understandingQueryService = understandingQueryService;
 		this.stateMachine = stateMachine;
 	}
 
@@ -109,7 +119,16 @@ public class SessionService {
 		return RevisionResponse.from(saved);
 	}
 
-	/** PRD §13 새로고침 대응. 현재 단계를 다시 그리는 데 필요한 것을 한 번에 준다 */
+	/**
+	 * PRD §13 새로고침 대응. 현재 단계를 다시 그리는 데 필요한 것을 한 번에 준다.
+	 *
+	 * <p><b>LLM 을 부르지 않는다.</b> 전부 저장된 값을 읽어 조립할 뿐이므로, 새로고침을 몇 번
+	 * 하든 요금이 들지 않고 판정도 바뀌지 않는다.
+	 *
+	 * <p>Coverage 와 Understanding 은 각 모듈의 조회 서비스가 만든다. 여기서 직접 조립하면
+	 * Gate 재판정과 질문 대상 규칙이 이 클래스에도 생겨, 분석 직후 응답과 새로고침 응답이
+	 * 서로 다른 코드로 만들어진다.
+	 */
 	@Transactional(readOnly = true)
 	public SessionSnapshotResponse getSnapshot(String sessionId) {
 		ConsultationSession session = loadSession(sessionId);
@@ -118,6 +137,8 @@ public class SessionService {
 				.findTopBySessionIdOrderByRevisionNoDesc(sessionId)
 				.map(RevisionResponse::from)
 				.orElse(null);
+
+		List<RiskUnderstandingState> understanding = understandingQueryService.statesOf(session);
 
 		return new SessionSnapshotResponse(
 				session.getId(),
@@ -128,10 +149,25 @@ public class SessionService {
 				session.getCreatedAt(),
 				session.getClosedAt(),
 				resumePointOf(session.getStatus()),
-				null,               // nextAction — Understanding 단계에서만 값이 생긴다 (TRD §6.6)
+				nextActionOf(session, understanding),
 				currentRevision,
-				null,               // coverage — F03
-				List.of());         // understanding — F04~F07
+				coverageQueryService.latestFor(session).orElse(null),
+				understanding);
+	}
+
+	/**
+	 * 계약: "Understanding 단계 진행 중이면 현재 시점의 분기값. Coverage 단계이거나 세션 종료
+	 * 후에는 null이며, 이때는 resumePoint를 쓴다."
+	 *
+	 * <p>종료된 세션에서 null 로 두는 것이 중요하다 — 값이 남아 있으면 프론트가 끝난 상담에서
+	 * 다음 행동 버튼을 그린다.
+	 */
+	private NextAction nextActionOf(ConsultationSession session,
+	                                List<RiskUnderstandingState> understanding) {
+		if (stateMachine.isClosed(session.getStatus())) {
+			return null;
+		}
+		return understandingQueryService.resumeActionOf(understanding);
 	}
 
 	private ConsultationSession loadSession(String sessionId) {

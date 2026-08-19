@@ -2,6 +2,8 @@ package io.finready.understanding;
 
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /**
  * {@code nextAction} 산출 단일 지점 (TRD §6.6, 규칙 8).
  *
@@ -48,6 +50,58 @@ public class NextActionResolver {
 	/** 직원 처리가 끝난 뒤. 처분이 UNRESOLVED 여도 다음 Risk 로 진행한다 (PRD §7.5) */
 	public NextAction afterStaffResolution(boolean hasRemaining) {
 		return afterRiskSettled(hasRemaining);
+	}
+
+	/**
+	 * 새로고침 복구용 — <b>저장된 상태만으로</b> 현재 분기값을 되살린다.
+	 *
+	 * <p>{@link #afterAnswer} 는 방금 일어난 판정을 알지만 여기는 모른다. 대신 위 표가 남긴
+	 * 흔적을 읽는다 — 특히 <b>attempt 2 질문의 존재 여부가 REEXPLAIN 과 RECHECK 를 가른다.</b>
+	 * UNCERTAIN 은 답변 즉시 후속 질문을 발급하고, MISUNDERSTOOD 는 재설명을 거쳐야 발급되기
+	 * 때문이다(PRD §7.5). 그래서 "미답변 attempt 2 질문이 있다 = 재설명이 끝났다"가 성립한다.
+	 *
+	 * <p>이 산출도 여기 두는 이유는 {@code afterAnswer} 와 같다 — 프론트가 aiStatus 와 attempt 를
+	 * 보고 자체 분기하면 두 경로가 어긋난다(규칙 8).
+	 *
+	 * @param states riskId 순서. 진행 중인 첫 Risk 가 화면을 정한다
+	 */
+	public NextAction resume(List<ResumeState> states) {
+		if (states == null || states.isEmpty()) {
+			return null;
+		}
+
+		ResumeState current = states.stream()
+				.filter(state -> state.workflowStatus() != WorkflowStatus.COMPLETE)
+				.findFirst()
+				.orElse(null);
+
+		if (current == null) {
+			return NextAction.GO_TO_REPORT;
+		}
+		if (current.workflowStatus() == WorkflowStatus.MANUAL_REVIEW_REQUIRED) {
+			return NextAction.STAFF_RESOLUTION_REQUIRED;
+		}
+		if (current.pendingAttempt() != null) {
+			return current.pendingAttempt() >= UnderstandingPolicy.RECHECK_ATTEMPT
+					? NextAction.RECHECK
+					: NextAction.NEXT_RISK;
+		}
+		// 답변은 했는데 후속 질문이 없다 = 재설명을 아직 안 거쳤다
+		return current.lastAiStatus() == UnderstandingStatus.MISUNDERSTOOD
+				? NextAction.REEXPLAIN
+				: NextAction.NEXT_RISK;
+	}
+
+	/**
+	 * {@link #resume} 의 입력. 엔티티를 받지 않는 이유는 이 클래스가 계약 표만 알게 하기
+	 * 위해서다 — 리포지토리나 JPA 를 알기 시작하면 표를 테스트하기 어려워진다.
+	 *
+	 * @param pendingAttempt 미답변 질문의 attempt. 없으면 null
+	 * @param lastAiStatus   마지막 attempt 의 AI 판정. 답변 이력이 없으면 null
+	 */
+	public record ResumeState(WorkflowStatus workflowStatus,
+	                          Integer pendingAttempt,
+	                          UnderstandingStatus lastAiStatus) {
 	}
 
 	private NextAction afterRiskSettled(boolean hasRemaining) {

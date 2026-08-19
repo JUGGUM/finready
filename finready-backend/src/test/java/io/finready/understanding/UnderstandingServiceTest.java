@@ -79,7 +79,7 @@ class UnderstandingServiceTest {
 		when(questionRepository.findBySessionIdOrderByRiskIdAscAttemptAsc(SESSION_ID)).thenReturn(List.of());
 		when(workflowStateRepository.findBySessionIdOrderByRiskIdAsc(SESSION_ID)).thenReturn(List.of());
 		when(customerProfileRepository.findById(anyString())).thenReturn(Optional.empty());
-		when(questionGenerator.phrase(anyList())).thenReturn(List.of());
+		when(questionGenerator.phrase(anyString(), anyList())).thenReturn(List.of());
 		when(writer.saveAnswer(anyString(), any(), any(), any(), anyBooleanArg()))
 				.thenReturn(SessionStatus.UNDERSTANDING_IN_PROGRESS);
 	}
@@ -126,7 +126,7 @@ class UnderstandingServiceTest {
 		@Test
 		@DisplayName("생성기가 다듬은 Risk 는 LLM 으로 표시된다")
 		void usesPhrasedQuestionWhenAvailable() {
-			when(questionGenerator.phrase(anyList())).thenReturn(List.of(
+			when(questionGenerator.phrase(anyString(), anyList())).thenReturn(List.of(
 					new QuestionGenerator.PhrasedQuestion("R01", "쉽게 바꾼 질문")));
 
 			QuestionsResponse response = service.getOrCreateQuestions(SESSION_ID);
@@ -141,7 +141,7 @@ class UnderstandingServiceTest {
 		@Test
 		@DisplayName("생성기가 터져도 흐름을 막지 않는다 — 검수 문항이 있다")
 		void generatorFailureDoesNotBlock() {
-			when(questionGenerator.phrase(anyList()))
+			when(questionGenerator.phrase(anyString(), anyList()))
 					.thenThrow(new IllegalStateException("LLM 미설정"));
 
 			QuestionsResponse response = service.getOrCreateQuestions(SESSION_ID);
@@ -160,7 +160,7 @@ class UnderstandingServiceTest {
 
 			QuestionsResponse response = service.getOrCreateQuestions(SESSION_ID);
 
-			verify(questionGenerator, never()).phrase(anyList());
+			verify(questionGenerator, never()).phrase(anyString(), anyList());
 			verify(writer, never()).saveIssuedQuestions(anyString(), anyList(), anyList());
 			assertThat(view(response, "R01").question()).isEqualTo("이미 나간 R01 질문");
 		}
@@ -296,7 +296,7 @@ class UnderstandingServiceTest {
 
 			assertThat(errorCodeOf(() -> service.submitAnswer(SESSION_ID, answer("R01"))))
 					.isEqualTo(ErrorCode.ATTEMPT_LIMIT_EXCEEDED);
-			verify(answerJudge, never()).judge(any());
+			verify(answerJudge, never()).judge(anyString(), any());
 		}
 
 		@Test
@@ -310,7 +310,7 @@ class UnderstandingServiceTest {
 
 			assertThat(errorCodeOf(() -> service.submitAnswer(SESSION_ID, answer("R01"))))
 					.isEqualTo(ErrorCode.RISK_ALREADY_FINALIZED);
-			verify(answerJudge, never()).judge(any());
+			verify(answerJudge, never()).judge(anyString(), any());
 		}
 
 		@Test
@@ -346,7 +346,7 @@ class UnderstandingServiceTest {
 			assertThat(errorCodeOf(() -> service.submitAnswer(SESSION_ID,
 					new SubmitAnswerRequest("R01", "  ", AnswerSource.CUSTOMER_DIRECT_DEMO))))
 					.isEqualTo(ErrorCode.INVALID_REQUEST);
-			verify(answerJudge, never()).judge(any());
+			verify(answerJudge, never()).judge(anyString(), any());
 		}
 
 		@Test
@@ -560,7 +560,7 @@ class UnderstandingServiceTest {
 	}
 
 	private void judgeReturns(UnderstandingStatus status, String reason) {
-		when(answerJudge.judge(any())).thenReturn(new AnswerJudge.Verdict(status, reason));
+		when(answerJudge.judge(anyString(), any())).thenReturn(new AnswerJudge.Verdict(status, reason));
 	}
 
 	private SubmitAnswerRequest answer(String riskId) {

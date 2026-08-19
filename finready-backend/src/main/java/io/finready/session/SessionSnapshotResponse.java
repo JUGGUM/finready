@@ -1,5 +1,9 @@
 package io.finready.session;
 
+import io.finready.coverage.CoverageResponse;
+import io.finready.understanding.NextAction;
+import io.finready.understanding.RiskUnderstandingState;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -8,9 +12,12 @@ import java.util.List;
  * 계약이 {@code allOf: [SessionResponse, {...}]} 라 JSON 이 평평하다. record 는 상속이
  * 안 되므로 SessionResponse 필드를 그대로 펼쳐 적는다.
  *
- * <p>coverage · nextAction · understanding 은 아직 만들지 않은 단계의 값이다.
- * 계약이 <b>명시적으로 null 과 빈 배열을 허용</b>한다("Coverage 단계이거나 세션 종료 후에는 null").
- * F03 / F04 에서 실제 타입으로 교체한다 — 그때까지 Object 는 자리표시다.
+ * <p><b>이 응답 하나로 새로고침이 복구된다.</b> 프론트는 여기 실린 값만 보고 화면을 되살리며
+ * 어떤 것도 자체 계산하지 않는다(규칙 8).
+ *
+ * @param nextAction Understanding 단계 진행 중이면 현재 분기값. Coverage 단계이거나
+ *                   세션 종료 후에는 null 이며, 이때는 {@code resumePoint} 를 쓴다
+ * @param coverage   분석 전이면 null. DRAFT 세션을 새로고침한 정상적인 경우다
  */
 public record SessionSnapshotResponse(
 		String sessionId,
@@ -21,9 +28,9 @@ public record SessionSnapshotResponse(
 		OffsetDateTime createdAt,
 		OffsetDateTime closedAt,
 		ResumePoint resumePoint,
-		Object nextAction,
+		NextAction nextAction,
 		RevisionResponse currentRevision,
-		Object coverage,
-		List<Object> understanding
+		CoverageResponse coverage,
+		List<RiskUnderstandingState> understanding
 ) {
 }

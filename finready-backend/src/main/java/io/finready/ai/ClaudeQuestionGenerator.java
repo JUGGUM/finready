@@ -64,9 +64,9 @@ class ClaudeQuestionGenerator implements QuestionGenerator {
 	}
 
 	@Override
-	public List<PhrasedQuestion> phrase(List<QuestionSeed> seeds) {
+	public List<PhrasedQuestion> phrase(String sessionId, List<QuestionSeed> seeds) {
 		AiGateway.AiCall call = new AiGateway.AiCall(
-				null,
+				sessionId,
 				STAGE,
 				PROMPT_VERSION,
 				SYSTEM_PROMPT,

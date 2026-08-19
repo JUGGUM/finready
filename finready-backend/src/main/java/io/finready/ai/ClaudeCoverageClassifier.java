@@ -126,9 +126,9 @@ class ClaudeCoverageClassifier implements CoverageClassifier {
 	}
 
 	@Override
-	public List<RiskVerdict> classify(String transcript, List<RiskPrompt> risks) {
+	public List<RiskVerdict> classify(String sessionId, String transcript, List<RiskPrompt> risks) {
 		AiGateway.AiCall call = new AiGateway.AiCall(
-				null,                       // sessionId 는 포트가 모른다. 세션 단위 집계는 stage 로 한다
+				sessionId,
 				STAGE,
 				PROMPT_VERSION,
 				buildSystemPrompt(risks),

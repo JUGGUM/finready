@@ -327,7 +327,7 @@ public class UnderstandingService {
 						"질문이 아직 발급되지 않았습니다.", riskId));
 
 		// --- LLM 호출. 여기는 트랜잭션 밖이다 (규칙 6) ---
-		AnswerJudge.Verdict verdict = answerJudge.judge(new AnswerJudge.JudgeRequest(
+		AnswerJudge.Verdict verdict = answerJudge.judge(sessionId, new AnswerJudge.JudgeRequest(
 				riskId, risk.getTitle(), risk.getFact(), question.getQuestion(), answer, attempt));
 
 		validate(verdict, riskId);
@@ -505,7 +505,7 @@ public class UnderstandingService {
 				.toList();
 
 		try {
-			List<QuestionGenerator.PhrasedQuestion> phrased = questionGenerator.phrase(seeds);
+			List<QuestionGenerator.PhrasedQuestion> phrased = questionGenerator.phrase(session.getId(), seeds);
 			return phrased == null ? Map.of() : phrased.stream()
 					.filter(item -> item.question() != null && !item.question().isBlank())
 					.collect(Collectors.toMap(QuestionGenerator.PhrasedQuestion::riskId,
