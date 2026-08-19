@@ -106,16 +106,21 @@ finready/
 ├── docs/
 │   ├── FinReady_PRD_DEV_FREEZE_v1.3.1.pdf   제품 요구사항 (DEV FREEZE)
 │   ├── FinReady Backend TRD v1_2_3.pdf      기술 설계 — 데이터 모델·상태머신·검증 절차
-│   └── openapi.yml                          API 계약 원본 (v1.4.2) ← 단일 원천
+│   ├── openapi.yml                          API 계약 원본 (v1.4.2) ← 단일 원천
+│   ├── backend-notes.md                     백엔드 작업 메모
+│   └── decisions/                           결정 기록 (왜 그렇게 했는지)
 │
 ├── finready-backend/          Spring Boot. 작업 규칙은 finready-backend/CLAUDE.md
-│   └── src/main/resources/
-│       ├── db/migration/      Flyway V1(테이블 14개) + V2(audit append-only 트리거)
-│       ├── seed/              product_a_risk_schema.json — 검수된 위험 9건
-│       └── static/documents/  상품설명서 PDF (SHA-256 고정)
+│   ├── tools/                 run-coverage-eval.ps1 / run-understanding-eval.ps1
+│   └── src/main/
+│       ├── java/io/finready/  도메인별 패키지 (아래 참조)
+│       └── resources/
+│           ├── db/migration/  Flyway V1(테이블 14개) · V2(append-only) · V3(제약 수정)
+│           ├── seed/          product_a_risk_schema.json(위험 9건) + customer_profiles.json
+│           └── static/documents/PROD_A/v1.0.pdf   상품설명서 (SHA-256 고정)
 │
 └── finready-frontend/         Next.js App Router
-    ├── contracts/openapi.yml  계약 사본 (현재 v1.4.1 — 원본보다 뒤처짐)
+    ├── contracts/openapi.yml  계약 사본 (v1.4.2 — 원본과 동일)
     └── src/
         ├── app/               라우트
         ├── screens/           화면 단위 컴포넌트 (s01~s08)
@@ -124,6 +129,20 @@ finready/
             ├── types/domain.ts  openapi.yml에서 생성된 타입의 별칭
             └── ui/            공용 UI
 ```
+
+백엔드 패키지는 TRD §2.1의 도메인 구분을 그대로 따른다. 계층(controller/service/repository)이
+아니라 **도메인**으로 나뉘어 있어서, 한 기능을 고칠 때 한 폴더만 열면 된다.
+
+| 패키지 | 담당 |
+|---|---|
+| `common/` | `StateMachine`(세션 상태 전이 단일 지점), 오류 규약(`ErrorCode`·`ApiException`·`GlobalExceptionHandler`), `RequestIdFilter`, CORS |
+| `product/` | 상품·위험·고객 프로파일, 시드 로더·검증기 (F01) |
+| `session/` | 세션·Revision, `resumePoint` 산출 (F02) |
+| `coverage/` | `OffsetMapper` → `ProvenanceVerifier` → `SemanticVerifier` → `CoverageStatusResolver` → `GateEvaluator`, Override (F03) |
+| `understanding/` | 질문 발급·답변 판정·`WorkflowStateMachine`·`NextActionResolver`·직원 처리 (F04·F05·F07) |
+| `explanation/` | 근거 기반 재설명 + `Guardrail`(금칙어 검사) (F06) |
+| `ai/` | 포트 5개의 Claude 구현체, 호출 로깅. 키가 없으면 `AiPortConfig`가 스텁을 끼운다 |
+| `audit/` | 감사 로그 (append-only) |
 
 **문서 우선순위는 PRD > TRD > 코드다.** 충돌하면 상위 문서가 이긴다.
 
@@ -147,12 +166,28 @@ flowchart LR
   subgraph BE["finready-backend (Spring Boot)"]
     CTRL["Controller"] --> SM["StateMachine<br/>상태 전이 단일 지점"]
     CTRL --> COV["Coverage 분류 → Provenance 검증<br/>→ Semantic Verifier → Gate 판정"]
-    COV --> LLM["LLM<br/>트랜잭션 밖에서 호출"]
+    COV --> LLM["ai/ 포트 5개<br/>Claude Sonnet 4.6"]
     CTRL --> DB[("PostgreSQL / Supabase<br/>schema: finready")]
   end
 
   SEED["seed JSON + PDF SHA-256"] -.->|"검증 실패 시 기동 중단"| CTRL
 ```
+
+### LLM을 부르는 자리
+
+포트 5개(`CoverageClassifier` · `SemanticVerifier` · `QuestionGenerator` · `AnswerJudge` ·
+`ReExplanationGenerator`)는 **각자의 도메인 패키지에** 인터페이스로 있고, Claude 구현체만
+`ai/`에 모여 있다. 의존 방향이 도메인 → AI가 아니라 AI → 도메인이므로 서비스 코드는
+모델을 모른다.
+
+- **LLM 호출은 트랜잭션 밖이다.** 서비스는 `읽기 → LLM → 쓰기` 순서이고 쓰기만 별도
+  `*Writer` 빈이 트랜잭션으로 묶는다. 같은 클래스 안에서 `@Transactional`을 자기 호출하면
+  프록시를 안 타 트랜잭션이 아예 안 걸리므로 빈을 분리했다.
+- **API 키가 없어도 서버는 뜬다.** `AiPortConfig`가 스텁을 등록해 F01·F02처럼 LLM이 필요 없는
+  경로를 막지 않고, 호출되는 순간에 설정 누락을 명시적으로 알린다. 빈 결과를 돌려주면
+  전 Risk가 "설명 안 됨"으로 읽혀 Gate가 잠기기 때문에 그렇게 하지 않는다.
+- **멱등**이 요금과 직결된다. 같은 revision에 Coverage 결과가 있으면 LLM을 다시 부르지 않는다.
+  재설명도 마찬가지다. 새로고침이 비용을 다시 물지 않는다.
 
 ### 프론트가 지키는 경계
 
@@ -240,6 +275,20 @@ provenance 실패 사유(`EMPTY` / `TOO_SHORT` / `TOO_LONG` / `NOT_FOUND` / `AMB
 화면에서 구분해 표시한다. "근거가 없다"와 "근거가 중복돼 특정이 안 된다"는
 직원의 다음 행동이 다르기 때문이다.
 
+**Semantic Verifier는 계약 문구보다 넓게 돈다.** 계약은 "GATE_REQUIRED + CONTRADICTED
+후보"라고 적었지만 구현은 `EXPLAINED` 후보도 돌린다. 위 규칙 때문에 EXPLAINED는
+`semantic = SUPPORTS` 없이 성립할 수 없어서, 안 돌리면 **잘 설명한 WARN_ONLY Risk가
+INSUFFICIENT로 접혀 경고로 둔갑한다.** 실측에서 완벽한 상담에 경고 3개가 뜨는 것으로
+확인됐다. `CoverageAnalysisServiceTest`가 이 동작을 고정하므로 계약 문구만 보고 되돌리면
+테스트가 깨진다.
+
+> **DB 제약이 실제로는 안 걸리고 있었다 (V3에서 수정).**
+> `ck_explained_requires_verification`이 `semantic_relation IS NULL`인 EXPLAINED를
+> 막지 못했다. Postgres CHECK는 결과가 FALSE일 때만 거부하는데 `NULL = 'SUPPORTS'`가
+> NULL이라 제약 전체가 NULL로 평가됐다. `is not distinct from`으로 교체했다.
+> **"DB로도 강제된다"고 적어둔 것이 그 경우엔 사실이 아니었다** — SQL 제약도 테스트가 필요하다.
+> 경위는 `docs/decisions/2026-08-18-explained-constraint-null-hole.md`.
+
 ### 4. LLM이 반환한 offset을 쓰지 않는다
 
 근거 문장의 위치는 서버가 원문에서 **재계산**한다. offset 단위는 UTF-16 code unit —
@@ -297,9 +346,16 @@ Java String index와 JavaScript String index가 같은 기준이어야 프론트
 | 빌드 | Gradle Kotlin DSL + Wrapper |
 | DB | PostgreSQL (Supabase, 스키마 `finready`, Supavisor Session Mode) |
 | 마이그레이션 | Flyway |
+| LLM | Claude Sonnet 4.6 (`com.anthropic:anthropic-java` 2.34.0) |
 | API 문서 | springdoc-openapi 3.1.0 |
+| 통합 테스트 | Testcontainers PostgreSQL (2.x) |
 | 배포 | Render Web Service (Singapore) / Docker |
 
+> **Boot 4는 자동설정을 기술별 모듈로 쪼갰다.** 라이브러리(`flyway-core` 등)만 넣으면
+> 자동설정이 **조용히 안 걸린다.** 반드시 `spring-boot-starter-*` 형태로 넣을 것.
+> 테스트 슬라이스도 마찬가지여서 `@WebMvcTest`는 `spring-boot-starter-webmvc-test`가
+> 따로 필요하고, `@MockBean`은 없어지고 `@MockitoBean`으로 바뀌었다.
+>
 > Boot 4는 Jackson 3(`tools.jackson`)를 쓴다. Boot 3 예제를 그대로 가져오면 안 된다.
 > springdoc도 3.x 라인이며 2.x는 Boot 3 전용이다.
 >
@@ -349,9 +405,20 @@ IntelliJ에서는 Run Configuration 환경변수에 위 3개와 `SPRING_PROFILES
 한 번 넣어두면 이후 초록 버튼으로 그냥 실행된다. 각 값의 형태는
 `src/main/resources/application-local.yaml.example`에 주석으로 적혀 있다.
 
+LLM을 쓰는 경로(F03~F07)까지 돌려보려면 `LLM_API_KEY`도 넣는다. 없으면 서버는 뜨지만
+해당 호출에서 설정 누락으로 명시적으로 실패한다.
+
 기동 시 시드(`product_a_risk_schema.json`)와 상품설명서 PDF의 SHA-256을 검증하며,
 실패하면 **부팅을 중단한다**(`finready.seed.fail-fast=true`).
 헬스체크는 `GET /actuator/health`.
+
+**앱을 띄우는 데 Docker는 필요 없다.** DB가 원격 Supabase라 띄울 컨테이너가 없고,
+`Dockerfile`은 Render 배포 전용이다. Docker가 필요한 것은 `./gradlew integrationTest`뿐이다.
+
+> ⚠️ **저장소를 한글·공백이 든 경로에 두지 말 것.** Windows에서 `gradlew test`가 통째로
+> 깨진다. Gradle이 테스트 워커 클래스패스를 `@argfile`로 넘기는데 Gradle은 UTF-8로 쓰고
+> JVM 런처는 cp949로 읽어서 경로가 깨진다. 증상은 전 테스트 `ClassNotFoundException`이며
+> **컴파일은 멀쩡히 통과한다.**
 
 ### 프론트엔드
 
@@ -388,10 +455,10 @@ pnpm typecheck    # 깨진 곳이 곧 계약 변경의 영향 범위다
 | `DB_URL` | `jdbc:postgresql://<host>:5432/postgres?currentSchema=finready&sslmode=require` |
 | `DB_USERNAME` | 전용 role. `finready_backend.{project-ref}` 형식인지 확인 필요 |
 | `DB_PASSWORD` | |
-| `LLM_API_KEY` | 응답·로그 어디에도 노출 금지 |
-| `LLM_MODEL` | 모델 선정은 미결 (심사 5일 quota 산정 필요) |
-| `LLM_BASE_URL` | |
-| `CORS_ALLOWED_ORIGINS` | 기본값 `http://localhost:3000` |
+| `LLM_API_KEY` | 응답·로그 어디에도 노출 금지. **기본값이 비어 있는 것은 의도적이다** — 필수로 두면 키 없이 기동조차 못 해 LLM이 필요 없는 화면까지 막힌다 |
+| `LLM_MODEL` | 기본값 `claude-sonnet-4-6` |
+| `LLM_BASE_URL` | 기본값 `https://api.anthropic.com` |
+| `CORS_ALLOWED_ORIGINS` | 기본값 `http://localhost:3000`. **프론트 배포 도메인을 넣지 않으면 배포 프론트에서 막힌다** |
 | `PORT` | Render가 주입. 기본 8080 |
 
 ### 프론트엔드
@@ -407,8 +474,9 @@ pnpm typecheck    # 깨진 곳이 곧 계약 변경의 영향 범위다
 
 ```bash
 # 백엔드
-./gradlew test        # 실제 LLM을 호출하지 않는다 (@Tag("evaluation") 제외)
-./gradlew evaluate    # 오프라인 평가 / Rule baseline. 실제 LLM을 호출한다
+./gradlew test             # 순수 단위 + @WebMvcTest. LLM·Docker 없이 돈다
+./gradlew integrationTest  # Testcontainers PostgreSQL. Docker Desktop 필요
+./gradlew evaluate         # 오프라인 평가 / Rule baseline. 실제 LLM을 호출한다
 
 # 프론트엔드
 pnpm test             # vitest
@@ -416,7 +484,18 @@ pnpm typecheck        # tsc --noEmit
 pnpm lint             # eslint
 ```
 
-일반 테스트에서 실제 LLM을 호출하지 않는 것이 규칙이다. 평가 모듈만 `evaluate` 태스크로 분리돼 있다.
+세 태스크로 나눈 이유가 있다. **순수 단위 테스트로는 DB에 걸린 규칙을 검증할 수 없다.**
+`ck_*` 제약, append-only 트리거, `updatable=false`, `@Version` 락은 Hibernate가 실제 SQL을
+만들어야 확인되므로, `test` 쪽은 "코드에 그렇게 적어놨다"까지만 본다. 실제 Postgres가 필요한
+검증은 `integrationTest`로 분리했다.
+
+기준 규모는 `test` 268건 + `integrationTest` 18건 (2026-08-19). 실제 LLM을 호출하는 것은
+`evaluate`뿐이며, `finready-backend/tools/`의 PowerShell 스크립트로 Coverage·Understanding
+전 구간 실측도 돌린다.
+
+> `test`·`integrationTest` 모두 `test` 프로파일로 돈다. `src/test/resources/application-test.yaml`이
+> 가짜 datasource를 박아두고 `AbstractPostgresIntegrationTest`가 `@DynamicPropertySource`로
+> 컨테이너 접속 정보를 덮어쓴다. 실수로 `@SpringBootTest`를 붙여도 **운영 Supabase에는 붙지 않는다.**
 
 프론트 테스트는 mock 백엔드의 판정 파이프라인(`mock-api.test.ts`)과
 재개 라우팅(`resume.test.ts`)을 덮는다. mock의 coverage 엔진은 상담문 내용이 결과를
@@ -460,13 +539,10 @@ pnpm lint             # eslint
 `finready-frontend/contracts/openapi.yml`은 **사본**이다.
 원본을 고쳤으면 사본 동기화(+ `pnpm gen:api`)까지가 한 작업이다.
 
-> ⚠️ **현재 사본은 v1.4.1로 원본(v1.4.2)보다 뒤처져 있다.** 미결 항목이다.
-> 사본에 없는 것: `UnderstandingResponse.recheckQuestion` / `recheckQuestionSource`,
-> `RiskUnderstandingState.pendingQuestion`, `StaffResolutionResponse`,
-> `SessionSnapshotResponse.nextAction`.
-> (`recheckQuestion`은 사본에도 있으나 `ReExplanationResponse`에만 달려 있어,
-> `/reexplain`을 거치지 않는 `UNCERTAIN` 경로에서는 후속 질문을 얻을 수 없다.
-> 그것이 v1.4.2가 고친 문제다.)
+> ✅ 사본은 **v1.4.2로 동기화 완료** (2026-08-14). 두 파일에 diff가 없다.
+> 프론트도 재생성해서 v1.4.2가 추가한 필드(`StaffResolutionResponse`,
+> `UnderstandingResponse.recheckQuestion`, `RiskUnderstandingState.pendingQuestion`,
+> `SessionSnapshotResponse.nextAction`)를 실제로 쓰고 있다.
 
 프론트 병렬 개발용으로 이 파일을 Prism 또는 msw에 물려 mock 서버로 쓸 수 있다
 (`servers[1]` = `http://localhost:4010/api`). 다만 현재 프론트는 자체 인메모리
@@ -498,53 +574,85 @@ chore: .gitignore 패턴 기반으로 변경
 main·safety 두 시나리오 모두 끝까지 통과한다.
 실서버 어댑터(`SpringFinReadyApi`)는 작성돼 있고, 연결은 환경변수 교체만 남았다.
 
-### 백엔드 — 인프라·데이터 준비 완료, 애플리케이션 계층 착수 전
+계약 v1.4.2를 실제로 소비한다 — `/staff-resolution` 응답의 `nextAction`으로 S07이 이동하고
+(세션을 다시 읽어 `resumePoint`로 추정하던 우회를 제거), `pendingQuestion` 덕에 재확인 도중
+새로고침해도 attempt 1로 되돌아가지 않는다.
 
-현재 Java 소스는 `BackendApplication.java` 하나다. 엔티티·서비스·컨트롤러는 아직 없다.
+### 백엔드 — F01~F07 구현 완료, F08만 남음
 
-**완료**
+Java 소스 118개. 인프라·데이터·API가 F07까지 올라와 있고 실제 LLM으로 검증까지 마쳤다.
 
-- Supabase `finready` 스키마 + `finready_backend` role + search_path/타임아웃/커넥션 한도
-- 프로젝트 스캐폴딩, `gradlew build` 성공 (Java 25 / Boot 4.0.7 / Gradle 9.5.1)
-- `application.yaml`, `V1__init.sql`(테이블 14개), `V2__audit_append_only.sql`
-- `seed/product_a_risk_schema.json` — PRD v1.3.1 정책표 반영본
-- 상품설명서 PDF 배치 및 SHA-256 확인
-- `src/test/resources/eval/demo_seed.json` — Gate 시나리오 6건
-- **로컬 DB 연결 + Flyway v1·v2 적용** — Supavisor Session Pooler로 `local` 기동,
-  테이블 14개 + `flyway_schema_history` 생성 확인 (2026-08-12)
-- **Render 배포** — https://finready-backend.onrender.com,
-  `/actuator/health` 200, Flyway `Current version: 2, up to date` (2026-08-13)
+| 기능 | 상태 | 비고 |
+|---|---|---|
+| F01 상품·고객 로드 | ✅ | openapi v1.4.2와 응답 대조 완료 |
+| F02 세션·Revision | ✅ | `StateMachine` 전이표 전수 테스트 |
+| F03 Coverage + Gate | ✅ | 실 LLM 5개 시나리오 검증 |
+| F04 질문 발급 | ✅ | 멱등. 생성 실패는 `FALLBACK`으로 정상 처리 |
+| F05 답변 판정 | ✅ | attempt는 **경로가 정한다** (`/understanding`=1) |
+| F06 근거 기반 재설명 | ✅ | `Guardrail` 금칙어 검사 포함 |
+| F07 재확인·직원 처리 | ✅ | attempt 2는 `/recheck` |
+| **F08 리포트·종료** | ❌ | `GET /report` · `POST /close` 미구현 |
+| `GET /sessions/{id}` 스냅샷 | ⚠️ | 세션은 돌려주지만 `coverage=null` · `understanding=[]` |
 
-**검증 완료 (2026-08-12)**
+**인프라 (완료)**
 
-- V1 테이블 14개 이름이 TRD §4.1 목록과 일치
-- 시드 risk 9건 정책이 PRD §5 정책표와 일치
-- 시드 sourceText 9건이 PDF 지정 페이지에 정확히 1회 존재
-- V2 트리거가 `before update or delete`만 잡고 INSERT를 넣지 않음 (TRD §4.4가 경고한 사고 회피됨)
+- Supabase `finready` 스키마 + 전용 role, Flyway V1~V3 적용
+- **Render 배포** — https://finready-backend.onrender.com (`/actuator/health` 200)
+- JPA 엔티티 14개 + enum 16개, `ddl-auto: validate` 통과
+- 시드 로더·검증기 — 위험 9건 + 고객 프로파일 3건, 해시 불일치 시 기동 중단
+- Testcontainers 통합 테스트, 평가 스크립트 2종
+
+**실 LLM 실측에서 알게 된 것**
+
+상세는 `docs/decisions/`에 있다. **프롬프트를 손대기 전에 그 문서부터 볼 것.**
+
+- **비용은 세션당 약 $0.11** (콜드, Risk 2건 처리 기준) → $5 크레딧으로 약 45세션.
+  착수 전 추정이 자릿수로 틀렸다 — 한국어 토큰을 과대평가했다(실측 대략 1글자=1토큰).
+- **Coverage 정확도 Risk 25/27, Gate 3/3.** 개별 Risk가 어긋나도 Gate 판단은 맞았다 —
+  평가 지표를 개별 Risk 정확도만으로 잡으면 이 사실이 안 보인다.
+- **`temperature: 0`인데도 경계 케이스는 실행마다 바뀐다.** 무작위가 아니라 입력이
+  모호할 때 경계에 집중해서 흔들린다. 명확한 판정은 3회 안정.
+- **키워드 매칭이 실패하는 지점을 통과한다.** "조기상환 조건은 투자설명서에 다 나와 있고"처럼
+  단어만 있고 설명이 없는 문장에서 `INSUFFICIENT`를 냈다.
+- **Guardrail의 핵심은 부정형 예외다.** "보장"·"확정"·"안전"을 단순 `contains`로 막으면
+  **맞는 설명이 걸린다** — 이 상품의 검수된 사실 자체가 부정형이다("원금이 보장되지 않습니다").
+  같은 절 안에서만 부정어를 찾는다.
 
 **다음 순서**
 
-1. JPA 엔티티 14개 (V1 DDL과 컬럼명·제약이 정확히 일치해야 함 — `ddl-auto: validate`)
-2. 시드 로더 + 검증기 (TRD §4.5, 실패 시 기동 중단)
-3. `GET /api/products/demo` (F01)
-4. 세션 / Revision / StateMachine (TRD §5.1)
-5. Coverage 4상태 + Provenance + OffsetMapper + Verifier + Gate + Override (F03)
-6. Understanding / 재설명 / Staff Resolution (F04~F07)
-7. Report + Close + Audit (F08)
-8. 오프라인 평가 모듈 + Rule baseline
+1. **`GET /sessions/{id}` 스냅샷 채우기** — 계약은 "새로고침 후 `pendingQuestion`으로
+   같은 문구가 복구된다"고 적었는데 아직 빈 값을 내보낸다. **심사 중 새로고침 한 번이
+   데모를 되돌린다.** F08과 데이터 출처가 거의 같아 함께 하는 게 싸다
+2. **F08 Report + Close + Audit** — `closedAt`·`closedBy`·`unresolvedReason`을 채우는
+   경로가 아직 없다. 남은 리포지토리는 `audit_event` 하나
+3. 오프라인 평가 모듈 + Rule baseline
+
+**병행**: 프론트를 배포 백엔드에 연결 (`NEXT_PUBLIC_API_BASE_URL` +
+백엔드 `CORS_ALLOWED_ORIGINS`에 프론트 도메인 추가).
 
 ### 데이터셋 (코드와 병행)
 
-- 상담 시나리오 6 / 목표 60 — `CONS_A_002`~`006`은 본문 미작성
+- 상담 시나리오 **6건 모두 본문 작성 완료.** 목표는 60건
+- 실 LLM 실행 5/6 — `CONS_A_006`(장황한 상담) 미실행. 시나리오당 약 $0.03
 - 고객 답변 12 / 목표 180
 - 라벨을 먼저 정하고 상담문을 생성하는 방식. 사후 라벨링 비용이 0이다
+- `DemoSeedGateConsistencyTest`가 라벨 ↔ 기대 Gate를 `GateEvaluator`로 재계산해 대조한다 —
+  60건까지 늘어나면 사람 눈으로는 유지되지 않는 검증이다
 
-### 미결정
+### 알려진 문제 · 미결정
 
-- LLM 모델·요금제 (심사 5일 quota 산정 필요) — TRD D-02
-- Guardrail 금칙어 최종 목록 — TRD D-04
-- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7)
-- `finready-frontend/contracts/openapi.yml` v1.4.1 → v1.4.2 동기화
+- ⚠️ **Coverage 레이턴시가 TRD §14 예산(12초)을 넘는다.** 실측 classifier 10.8~23.3초.
+  타임아웃을 60초로 올려 **실패 모양만 바꿨고 근본 해결은 안 됐다.** 배치 병렬화가
+  유력하나 항목 간 경계 규칙이 나빠질 위험이 있어 재측정이 필요하다.
+  프론트에 실측 33초를 전달해야 한다 (fetch 타임아웃·대기 화면 기준값)
+- **캐시 TTL을 5분 → 1시간으로 올릴지** — 심사처럼 세션이 띄엄띄엄 오면 5분 TTL은
+  매번 쓰기만 물고 읽기 혜택이 없다. 배포 전 결정
+- **`revisionNo` 채번 경쟁 상태가 남아 있다** (의도적 보류). 실패가 409
+  `CONCURRENT_SESSION_UPDATE`로 나가 프론트가 재시도할 수 있게만 해뒀다
+- **`resumePoint` 매핑을 프론트 화면 정의와 대조할 것.** TRD에 규정이 없어
+  `SessionService.resumePointOf`가 단독으로 정하고 있다
+- **Guardrail 임계값 표본이 2건뿐이다.** 한 번 걸리고 한 번 통과했다(적정 신호지만 n=2)
+- TRD §1 기술스택 표 정정 (Java 21/Boot 3.x → Java 25/Boot 4.0.7) — PDF 원본이라 코드로 처리 불가
 
 ---
 
@@ -577,6 +685,8 @@ main·safety 두 시나리오 모두 끝까지 통과한다.
 | 저장소 공통 규칙 | [`CLAUDE.md`](CLAUDE.md) |
 | 백엔드 작업 규칙·진행 상황 | [`finready-backend/CLAUDE.md`](finready-backend/CLAUDE.md) |
 | API 계약 | [`docs/openapi.yml`](docs/openapi.yml) |
+| 결정 기록 (왜 그렇게 했는지) | [`docs/decisions/`](docs/decisions/) |
+| 백엔드 작업 메모 | [`docs/backend-notes.md`](docs/backend-notes.md) |
 | 제품 요구사항 (PRD v1.3.1) | [`docs/FinReady_PRD_DEV_FREEZE_v1.3.1.pdf`](docs/FinReady_PRD_DEV_FREEZE_v1.3.1.pdf) |
 | 기술 설계 (TRD v1.2.3) | [`docs/FinReady Backend TRD v1_2_3.pdf`](<docs/FinReady Backend TRD v1_2_3.pdf>) |
 
