@@ -1,5 +1,7 @@
 package io.finready.understanding;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditRecorder;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
@@ -24,6 +26,7 @@ class UnderstandingWriter {
 	private final UnderstandingResultRepository resultRepository;
 	private final RiskWorkflowStateRepository workflowStateRepository;
 	private final StaffResolutionRepository staffResolutionRepository;
+	private final AuditRecorder auditRecorder;
 	private final StateMachine stateMachine;
 
 	UnderstandingWriter(ConsultationSessionRepository sessionRepository,
@@ -31,22 +34,30 @@ class UnderstandingWriter {
 	                    UnderstandingResultRepository resultRepository,
 	                    RiskWorkflowStateRepository workflowStateRepository,
 	                    StaffResolutionRepository staffResolutionRepository,
+	                    AuditRecorder auditRecorder,
 	                    StateMachine stateMachine) {
 		this.sessionRepository = sessionRepository;
 		this.questionRepository = questionRepository;
 		this.resultRepository = resultRepository;
 		this.workflowStateRepository = workflowStateRepository;
 		this.staffResolutionRepository = staffResolutionRepository;
+		this.auditRecorder = auditRecorder;
 		this.stateMachine = stateMachine;
 	}
 
-	/** F04 — 질문 발급 + workflow 상태 초기화 + 세션을 이해확인 단계로 */
+	/**
+	 * F04 — 질문 발급 + workflow 상태 초기화 + 세션을 이해확인 단계로.
+	 *
+	 * <p>감사 기록도 같은 트랜잭션이다 — 밖에서 부르면 저장이 롤백된 뒤에도 기록만 남는다.
+	 */
 	@Transactional
 	void saveIssuedQuestions(String sessionId,
 	                         List<SessionQuestion> questions,
-	                         List<RiskWorkflowState> initialStates) {
+	                         List<RiskWorkflowState> initialStates,
+	                         AuditEntry audit) {
 		questionRepository.saveAll(questions);
 		workflowStateRepository.saveAll(initialStates);
+		auditRecorder.record(sessionId, audit);
 		moveTo(sessionId, SessionStatus.UNDERSTANDING_IN_PROGRESS);
 	}
 
@@ -63,12 +74,14 @@ class UnderstandingWriter {
 	                         UnderstandingResult result,
 	                         RiskWorkflowState workflowState,
 	                         SessionQuestion recheckQuestion,
-	                         boolean understandingFinished) {
+	                         boolean understandingFinished,
+	                         AuditEntry audit) {
 		resultRepository.save(result);
 		workflowStateRepository.save(workflowState);
 		if (recheckQuestion != null) {
 			questionRepository.save(recheckQuestion);
 		}
+		auditRecorder.record(sessionId, audit);
 		return understandingFinished
 				? moveTo(sessionId, SessionStatus.AWAITING_STAFF_REVIEW)
 				: currentStatusOf(sessionId);
@@ -95,9 +108,11 @@ class UnderstandingWriter {
 	SessionStatus saveStaffResolution(String sessionId,
 	                                  StaffResolution resolution,
 	                                  RiskWorkflowState workflowState,
-	                                  boolean understandingFinished) {
+	                                  boolean understandingFinished,
+	                                  AuditEntry audit) {
 		staffResolutionRepository.save(resolution);
 		workflowStateRepository.save(workflowState);
+		auditRecorder.record(sessionId, audit);
 		return understandingFinished
 				? moveTo(sessionId, SessionStatus.AWAITING_STAFF_REVIEW)
 				: currentStatusOf(sessionId);

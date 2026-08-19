@@ -165,6 +165,55 @@ class SessionControllerTest {
 				.andExpect(jsonPath("$.recoverable").value(true));
 	}
 
+	// ------------------------------------------------------------------
+	// POST /api/sessions/{id}/close  (F08)
+	// ------------------------------------------------------------------
+
+	/** 계약이 close 응답을 SessionResponse 로 정의한다. 201 이 아니라 200 이다 */
+	@Test
+	@DisplayName("POST /api/sessions/{id}/close → 200 SessionResponse")
+	void closeReturnsSessionResponse() throws Exception {
+		when(sessionService.closeSession(anyString(), any())).thenReturn(
+				new SessionResponse(SESSION_ID, "PROD_A", "CUST_A", "A-2026-08-12-01",
+						SessionStatus.SESSION_CLOSED_BY_STAFF,
+						OffsetDateTime.parse("2026-08-14T09:00:00Z"),
+						OffsetDateTime.parse("2026-08-14T10:00:00Z")));
+
+		mockMvc.perform(post("/api/sessions/{id}/close", SESSION_ID)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"actor\":\"staff-001\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.sessionStatus").value("SESSION_CLOSED_BY_STAFF"))
+				.andExpect(jsonPath("$.closedAt").exists());
+	}
+
+	@Test
+	@DisplayName("미해결 사유 누락 → 400 UNRESOLVED_REASON_REQUIRED")
+	void closeWithoutReasonReturns400() throws Exception {
+		when(sessionService.closeSession(anyString(), any())).thenThrow(
+				new ApiException(ErrorCode.UNRESOLVED_REASON_REQUIRED, "사유를 입력해 주세요.", "R01"));
+
+		mockMvc.perform(post("/api/sessions/{id}/close", SESSION_ID)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"actor\":\"staff-001\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("UNRESOLVED_REASON_REQUIRED"))
+				.andExpect(jsonPath("$.riskId").value("R01"));
+	}
+
+	@Test
+	@DisplayName("경고 확인 누락 → 400 WARNING_ACKNOWLEDGEMENT_REQUIRED")
+	void closeWithoutAcknowledgementReturns400() throws Exception {
+		when(sessionService.closeSession(anyString(), any())).thenThrow(
+				new ApiException(ErrorCode.WARNING_ACKNOWLEDGEMENT_REQUIRED, "확인이 필요합니다.", "R07"));
+
+		mockMvc.perform(post("/api/sessions/{id}/close", SESSION_ID)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"actor\":\"staff-001\",\"acknowledgedWarnings\":[]}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("WARNING_ACKNOWLEDGEMENT_REQUIRED"));
+	}
+
 	/** 안 잡으면 500 으로 나간다. 클라이언트 잘못을 서버 오류로 보고하는 셈이다 */
 	@Test
 	@DisplayName("깨진 JSON → 400 INVALID_REQUEST")

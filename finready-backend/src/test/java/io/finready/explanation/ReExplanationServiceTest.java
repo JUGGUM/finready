@@ -77,7 +77,7 @@ class ReExplanationServiceTest {
 		when(understandingService.issueRecheckQuestion(SESSION_ID, RISK_ID))
 				.thenReturn(new UnderstandingService.IssuedQuestion("후속 질문", GenerationSource.FALLBACK));
 		// 저장은 넘어온 엔티티를 그대로 돌려준다 — id 채번은 이 테스트의 관심사가 아니다
-		when(writer.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(writer.save(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
 	}
 
 	@Nested
@@ -199,7 +199,7 @@ class ReExplanationServiceTest {
 			assertThat(response.explanation()).isEqualTo("이미 저장된 설명");
 			// 새로고침이 요금을 다시 물면 안 된다
 			verify(generator, never()).explain(any(), any(), any(), any(), any(), any(), any());
-			verify(writer, never()).save(any());
+			verify(writer, never()).save(any(), any());
 		}
 
 		@Test

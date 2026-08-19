@@ -1,5 +1,7 @@
 package io.finready.coverage;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditEventType;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
@@ -112,8 +114,16 @@ public class CoverageAnalysisService {
 		GateEvaluator.GateVerdict verdict = gateEvaluator.evaluate(
 				analysis.results(), policiesOf(risksById), overrides.keySet());
 
-		SessionStatus status =
-				writer.saveAnalysis(sessionId, analysis.results(), targetStatusOf(verdict));
+		// AI 판정이므로 actorRole=AI 다. 직원이 한 일과 모델이 한 일이 리포트에서
+		// 구분되지 않으면 "AI 원판정을 숨기지 않는다"가 무너진다
+		SessionStatus status = writer.saveAnalysis(sessionId, analysis.results(),
+				targetStatusOf(verdict),
+				AuditEntry.ai(AuditEventType.COVERAGE_ANALYZED,
+						"revisionId=" + revision.getId()
+								+ ", gateStatus=" + verdict.gateStatus()
+								+ ", blocking=" + verdict.blockingRiskIds()
+								+ ", warning=" + verdict.warningRiskIds()
+								+ ", promptVersion=" + analysis.promptVersionLabel()));
 
 		return CoverageResponse.of(sessionId, revision.getId(), status, verdict, analysis.results(),
 				risksById, overrides, analysis.toView());
@@ -180,7 +190,12 @@ public class CoverageAnalysisService {
 		GateEvaluator.GateVerdict verdict =
 				gateEvaluator.evaluate(results, policiesOf(risksById), overriddenRiskIds);
 
-		SessionStatus status = writer.saveOverrides(sessionId, newOverrides, targetStatusOf(verdict));
+		SessionStatus status = writer.saveOverrides(sessionId, newOverrides, targetStatusOf(verdict),
+				AuditEntry.staff(AuditEventType.GATE_OVERRIDE_APPLIED, request.actor(),
+						"riskIds=" + riskIds
+								+ ", category=" + request.category()
+								+ ", staffExplanationConfirmed=" + request.staffExplanationConfirmed()
+								+ ", gateStatus=" + verdict.gateStatus()));
 
 		return CoverageResponse.of(sessionId, revision.getId(), status, verdict, results,
 				risksById, loadOverrides(sessionId), null);

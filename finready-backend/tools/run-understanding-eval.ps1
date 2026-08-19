@@ -8,13 +8,18 @@
 
 <#
 .SYNOPSIS
-    F04~F07 전 구간을 실제 서버·실제 LLM으로 한 번 통과시킨다.
+    F04~F08 전 구간을 실제 서버·실제 LLM으로 한 번 통과시킨다.
 
 .DESCRIPTION
-    질문 발급 → 답변 판정 → 재설명 → 후속 확인 → 직원 처리까지 두 갈래를 태운다.
+    질문 발급 → 답변 판정 → 재설명 → 후속 확인 → 직원 처리 → 리포트 → 종료까지
+    세 갈래를 태운다.
 
       R01  오해 → 재설명 → 후속 확인 정답  → COMPLETE / AUTO_RESOLVED
       R02  오해 → 재설명 → 후속 확인도 오해 → MANUAL_REVIEW → 직원 처리
+      R03  한 번에 이해                     → COMPLETE / AUTO_RESOLVED
+
+    마지막에 리포트를 읽고 세션을 종료한다. 감사 이벤트가 실제로 쌓였는지도 여기서 본다 —
+    단위 테스트는 "기록을 호출했다"까지만 확인하고, 실제로 남았는지는 전 구간을 돌려야 안다.
 
     답변 문구는 eval/demo_seed.json 의 라벨된 답변을 그대로 쓴다. 손으로 입력하면
     라벨과 다른 문장을 넣게 되고, 그러면 판정이 맞았는지 틀렸는지 말할 수 없다.
@@ -243,6 +248,104 @@ $checks.Add((Write-Check 'R02 직원처리 보존' 'RESOLVED_BY_STAFF' $r02State
 $checks.Add((Write-Check 'R02 AI판정 보존' 'MISUNDERSTOOD' $r02State.attempts[-1].aiStatus))
 $checks.Add((Write-Check 'nextAction 복구' 'NEXT_RISK' $snapshot.nextAction))
 
+# ---------------------------------------------------------------- 6) R03 마무리
+Write-Step '6) R03  한 번에 이해 → 이해확인 단계 종료'
+
+$c1 = Get-Answer 'ANS_R03_002'
+Write-Host ("  답변(attempt 1, gold={0}): {1}" -f $c1.goldLabel, $c1.answer) -ForegroundColor Gray
+$r03 = Submit-Answer 'understanding' 'R03' $c1.answer
+$checks.Add((Write-Check 'R03 aiStatus' $c1.goldLabel $r03.aiStatus))
+$checks.Add((Write-Check 'R03 disposition' 'AUTO_RESOLVED' $r03.finalDisposition))
+# 마지막 Risk 가 끝나면 세션이 직원 검토 단계로 넘어간다
+$checks.Add((Write-Check 'R03 nextAction' 'GO_TO_REPORT' $r03.nextAction))
+
+# ---------------------------------------------------------------- 7) F08 리포트
+Write-Step '7) GET /sessions/{id}/report — F08'
+
+$report = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId/report"
+
+Write-Host ("  sessionStatus = {0}" -f $report.sessionStatus) -ForegroundColor Gray
+Write-Host ("  gateStatus    = {0}" -f $report.coverage.gateStatus) -ForegroundColor Gray
+Write-Host ("  unresolved    = [{0}]" -f ($report.unresolvedRiskIds -join ',')) -ForegroundColor Gray
+Write-Host ("  ack 필요      = [{0}]" -f ($report.closeEligibility.requiresWarningAcknowledgement -join ',')) -ForegroundColor Gray
+
+$checks.Add((Write-Check 'report sessionStatus' 'AWAITING_STAFF_REVIEW' $report.sessionStatus))
+$checks.Add((Write-Check 'report coverage 복구' $coverage.gateStatus $report.coverage.gateStatus))
+$checks.Add((Write-Check 'report understanding' 3 @($report.understanding).Count))
+$checks.Add((Write-Check 'report revisions' 1 @($report.revisions).Count))
+$checks.Add((Write-Check 'report canClose' $true $report.closeEligibility.canClose))
+# R02 는 직원이 해결했으므로 미해결이 아니다
+$checks.Add((Write-Check 'report unresolved 없음' 0 @($report.unresolvedRiskIds).Count))
+$checks.Add((Write-Check 'report expectedStatus' 'SESSION_CLOSED_BY_STAFF' $report.closeEligibility.expectedCloseStatus))
+$checks.Add((Write-Check 'report disclaimer' $true ($report.disclaimer -like '*법적 판정이 아니며*')))
+
+# 규칙 1 — 직원이 해결해도 AI 원판정은 리포트에 남는다
+$r02Report = $report.understanding | Where-Object { $_.riskId -eq 'R02' }
+$checks.Add((Write-Check 'report AI판정 보존' 'MISUNDERSTOOD' $r02Report.attempts[-1].aiStatus))
+
+Write-Host ''
+Write-Host '  --- 감사 이벤트 ---' -ForegroundColor Yellow
+foreach ($e in $report.auditEvents) {
+    Write-Host ("  {0,-26} {1,-7} {2}" -f $e.eventType, $e.actorRole, $e.payloadSummary) -ForegroundColor Gray
+}
+$eventTypes = @($report.auditEvents | ForEach-Object { $_.eventType })
+foreach ($expected in @('SESSION_CREATED', 'REVISION_SAVED', 'COVERAGE_ANALYZED',
+                        'QUESTIONS_ISSUED', 'ANSWER_JUDGED', 'RE_EXPLANATION_GENERATED',
+                        'STAFF_RESOLUTION_RECORDED')) {
+    $checks.Add((Write-Check "audit $expected" $true ($eventTypes -contains $expected)))
+}
+# 모델이 정한 것과 사람이 정한 것이 구분돼야 리포트를 신뢰할 수 있다
+$aiEvents = @($report.auditEvents | Where-Object { $_.actorRole -eq 'AI' })
+$staffEvents = @($report.auditEvents | Where-Object { $_.actorRole -eq 'STAFF' })
+$checks.Add((Write-Check 'audit AI 기록' $true ($aiEvents.Count -gt 0)))
+$checks.Add((Write-Check 'audit STAFF 기록' $true ($staffEvents.Count -gt 0)))
+
+# ---------------------------------------------------------------- 8) F08 종료
+Write-Step '8) POST /sessions/{id}/close — F08'
+
+$requiredAck = @($report.closeEligibility.requiresWarningAcknowledgement)
+
+# 확인 목록을 빠뜨리면 400 이어야 한다. 있을 때만 의미가 있는 검사다
+if ($requiredAck.Count -gt 0) {
+    $rejected = $false
+    try {
+        Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/close" -Body @{
+            actor = 'staff-demo'
+        } | Out-Null
+    }
+    catch {
+        $rejected = $true
+        Write-Host ("  경고 확인 누락 → 거부됨 ({0})" -f $_.Exception.Response.StatusCode) -ForegroundColor DarkGray
+    }
+    $checks.Add((Write-Check '경고 미확인 거부' $true $rejected))
+}
+else {
+    Write-Host '  확인 대상 WARN_ONLY 없음 — 누락 거부 검사는 건너뛴다' -ForegroundColor DarkGray
+}
+
+$closed = Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/close" -Body @{
+    actor                = 'staff-demo'
+    acknowledgedWarnings = $requiredAck
+}
+$checks.Add((Write-Check 'close sessionStatus' 'SESSION_CLOSED_BY_STAFF' $closed.sessionStatus))
+$checks.Add((Write-Check 'close closedAt' $true ($null -ne $closed.closedAt)))
+
+# 종료 버튼을 두 번 눌러도 409 로 끝나면 안 된다
+$closedAgain = Invoke-Json -Method POST -Url "$BaseUrl/api/sessions/$sessionId/close" -Body @{
+    actor                = 'staff-demo'
+    acknowledgedWarnings = $requiredAck
+}
+$checks.Add((Write-Check 'close 멱등' $closed.closedAt $closedAgain.closedAt))
+
+$finalReport = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId/report"
+$checks.Add((Write-Check '종료 후 canClose' $false $finalReport.closeEligibility.canClose))
+$checks.Add((Write-Check '종료 감사 기록' $true (@($finalReport.auditEvents | ForEach-Object { $_.eventType }) -contains 'SESSION_CLOSED')))
+
+$finalSnapshot = Invoke-Json -Method GET -Url "$BaseUrl/api/sessions/$sessionId"
+$checks.Add((Write-Check '종료 후 resumePoint' 'S08' $finalSnapshot.resumePoint))
+# 끝난 상담에 다음 행동 버튼을 그리면 안 된다 (계약)
+$checks.Add((Write-Check '종료 후 nextAction' $null $finalSnapshot.nextAction))
+
 # ---------------------------------------------------------------- 결과
 $passed = @($checks | Where-Object { $_ }).Count
 Write-Host ''
@@ -259,7 +362,10 @@ if ($OutFile) {
         questions       = $questions
         r01             = @{ first = $r01First; reExplanation = $r01Re; second = $r01Second }
         r02             = @{ first = $r02First; reExplanation = $r02Re; second = $r02Second; resolution = $resolution }
+        r03             = $r03
         snapshot        = $snapshot
+        report          = $report
+        closed          = $closed
     } | ConvertTo-Json -Depth 12 | Out-File -FilePath $OutFile -Encoding utf8
     Write-Host "결과 저장: $OutFile" -ForegroundColor DarkGray
 }

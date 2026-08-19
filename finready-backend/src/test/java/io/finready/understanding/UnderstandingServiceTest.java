@@ -80,7 +80,7 @@ class UnderstandingServiceTest {
 		when(workflowStateRepository.findBySessionIdOrderByRiskIdAsc(SESSION_ID)).thenReturn(List.of());
 		when(customerProfileRepository.findById(anyString())).thenReturn(Optional.empty());
 		when(questionGenerator.phrase(anyString(), anyList())).thenReturn(List.of());
-		when(writer.saveAnswer(anyString(), any(), any(), any(), anyBooleanArg()))
+		when(writer.saveAnswer(anyString(), any(), any(), any(), anyBooleanArg(), any()))
 				.thenReturn(SessionStatus.UNDERSTANDING_IN_PROGRESS);
 	}
 
@@ -161,7 +161,7 @@ class UnderstandingServiceTest {
 			QuestionsResponse response = service.getOrCreateQuestions(SESSION_ID);
 
 			verify(questionGenerator, never()).phrase(anyString(), anyList());
-			verify(writer, never()).saveIssuedQuestions(anyString(), anyList(), anyList());
+			verify(writer, never()).saveIssuedQuestions(anyString(), anyList(), anyList(), any());
 			assertThat(view(response, "R01").question()).isEqualTo("이미 나간 R01 질문");
 		}
 
@@ -221,7 +221,7 @@ class UnderstandingServiceTest {
 			service.getOrCreateQuestions(SESSION_ID);
 
 			ArgumentCaptor<List<RiskWorkflowState>> captor = captor();
-			verify(writer).saveIssuedQuestions(anyString(), anyList(), captor.capture());
+			verify(writer).saveIssuedQuestions(anyString(), anyList(), captor.capture(), any());
 
 			assertThat(captor.getValue())
 					.filteredOn(state -> state.getRiskId().equals("R02"))
@@ -337,7 +337,7 @@ class UnderstandingServiceTest {
 
 			assertThat(errorCodeOf(() -> service.submitAnswer(SESSION_ID, answer("R01"))))
 					.isEqualTo(ErrorCode.AI_PARSING_FAILED);
-			verify(writer, never()).saveAnswer(anyString(), any(), any(), any(), anyBooleanArg());
+			verify(writer, never()).saveAnswer(anyString(), any(), any(), any(), anyBooleanArg(), any());
 		}
 
 		@Test
@@ -374,7 +374,7 @@ class UnderstandingServiceTest {
 			UnderstandingResponse response = service.submitAnswer(SESSION_ID, answer("R01"));
 
 			assertThat(response.nextAction()).isEqualTo(NextAction.GO_TO_REPORT);
-			verify(writer).saveAnswer(eq(SESSION_ID), any(), any(), any(), eq(true));
+			verify(writer).saveAnswer(eq(SESSION_ID), any(), any(), any(), eq(true), any());
 		}
 	}
 
@@ -525,7 +525,7 @@ class UnderstandingServiceTest {
 			assertThat(errorCodeOf(() -> service.resolveByStaff(SESSION_ID, "R01",
 					new StaffResolutionRequest(StaffDisposition.UNRESOLVED, "짧음", "staff-1"))))
 					.isEqualTo(ErrorCode.UNRESOLVED_REASON_REQUIRED);
-			verify(writer, never()).saveStaffResolution(anyString(), any(), any(), anyBooleanArg());
+			verify(writer, never()).saveStaffResolution(anyString(), any(), any(), anyBooleanArg(), any());
 		}
 
 		@Test
@@ -541,7 +541,7 @@ class UnderstandingServiceTest {
 					new StaffResolutionRequest(StaffDisposition.RESOLVED_BY_STAFF, "구두로 다시 설명함", "staff-1"));
 
 			assertThat(response.nextAction()).isEqualTo(NextAction.GO_TO_REPORT);
-			verify(writer).saveStaffResolution(eq(SESSION_ID), any(), any(), eq(true));
+			verify(writer).saveStaffResolution(eq(SESSION_ID), any(), any(), eq(true), any());
 		}
 	}
 

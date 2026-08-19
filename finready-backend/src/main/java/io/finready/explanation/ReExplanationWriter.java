@@ -1,5 +1,7 @@
 package io.finready.explanation;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditRecorder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,13 +14,23 @@ import org.springframework.transaction.annotation.Transactional;
 class ReExplanationWriter {
 
 	private final ReExplanationRepository repository;
+	private final AuditRecorder auditRecorder;
 
-	ReExplanationWriter(ReExplanationRepository repository) {
+	ReExplanationWriter(ReExplanationRepository repository, AuditRecorder auditRecorder) {
 		this.repository = repository;
+		this.auditRecorder = auditRecorder;
 	}
 
+	/**
+	 * 재설명 저장 + 감사 기록.
+	 *
+	 * <p>본문은 남기지 않는다. {@code re_explanation} 에 이미 있고, 감사 로그가 볼 것은
+	 * <b>LLM 이 만든 문장인지 검수 문장인지</b>와 <b>Guardrail 에 걸렸는지</b>다.
+	 */
 	@Transactional
-	ReExplanation save(ReExplanation reExplanation) {
-		return repository.save(reExplanation);
+	ReExplanation save(ReExplanation reExplanation, AuditEntry audit) {
+		ReExplanation saved = repository.save(reExplanation);
+		auditRecorder.record(reExplanation.getSessionId(), audit);
+		return saved;
 	}
 }

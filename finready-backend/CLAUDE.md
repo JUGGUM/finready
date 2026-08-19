@@ -281,6 +281,27 @@ Hibernate가 실제 SQL을 만들어야 확인되므로, `@WebMvcTest` 쪽은 "�
   · 직원 처리는 `ai_status`를 건드리지 않는다(규칙 1). `StaffResolutionHandling` 테스트가
   `resultRepository.save`가 호출되지 않음을 고정한다
   · 신규 테스트 38건 (Guardrail 15 / ReExplanation 12 / F07 11). 전체 268 + 18 통과 (2026-08-19)
+- **F08 리포트 + 종료 + 감사** — `GET /sessions/{id}/report`, `POST /sessions/{id}/close`.
+  · `audit/` 신설 — `AuditEventType`(9값) / `AuditEntry` / `AuditRecorder` / `AuditEventRepository`.
+  기록 지점 9개: 세션 생성·revision 저장·Coverage 분석·Gate Override·질문 발급·답변 판정·
+  재설명 생성·직원 처리·세션 종료
+  · **`AuditRecorder` 는 `Propagation.MANDATORY`** — 감사 기록이 자기 트랜잭션을 새로 열면
+  변경은 롤백됐는데 기록만 남는 조합이 생긴다. 규칙 6 때문에 서비스에는 트랜잭션이 없으므로,
+  요약 문자열은 서비스가 `AuditEntry` 로 만들어 Writer 에 넘긴다
+  · **`AuditEventRepository` 가 `JpaRepository` 를 상속하지 않는다** — append-only 테이블에
+  `delete` 가 자동완성으로 노출되지 않게 필요한 두 메서드만 선언했다. 규칙 1이
+  "리포지토리에 UPDATE 메서드를 만들지 말 것"이라 한 것과 같은 이유
+  · `session/CloseEligibilityEvaluator` — 리포트의 `closeEligibility` 와 종료 요청 검증이
+  **같은 판정을 쓴다.** `canClose` 는 따로 정의하지 않고 `StateMachine.canTransition` 에 묻는다
+  (규칙 7 — 조건을 복제하면 전이표를 고쳐도 이쪽이 안 따라온다)
+  · 경고 확인은 **개수가 아니라 riskId 로 대조**한다. 개수만 세면 다른 Risk 를 같은 개수만큼
+  보내도 통과한다
+  · 미해결이 없으면 사유를 **저장하지 않는다** — 정상 종료인데 사유가 남으면 리포트에서
+  "무언가 미해결이었다"로 읽힌다
+  · 종료는 **멱등**하다. 버튼 두 번 누르기·새로고침 후 재시도가 409 로 끝나면 안 된다
+  · `report/ReportService` 는 아무것도 계산하지 않는다 — Coverage·Understanding 조회 서비스와
+  `CloseEligibilityEvaluator` 의 결과를 담기만 한다
+  · 신규 테스트 38건. 전체 **345건**(단위 324 + 통합 21) 통과 (2026-08-19)
 
 ### 검증한 것 (2026-08-12)
 - V1 테이블 14개가 TRD §4.1 목록과 이름 일치
@@ -435,10 +456,25 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
    `pendingQuestion`은 **개수가 아니라 attempt로 매칭**한다
    → `NextActionResolver.resume(...)` 신설 — 저장된 상태만으로 재개 지점을 다시 계산한다.
    규칙 8(서버가 분기 결정)을 새로고침 경로에도 적용한 것
-4. Report + Close + Audit (F08) ← **다음**
-   → `ConsultationSession.closedAt`·`closedBy`·`unresolvedReason`을 채우는 경로가 아직 없다
-   → 리포지토리는 이제 `staff_resolution`·`re_explanation`까지 생겼다. 남은 건
-   `audit_event`뿐이다
+4. ~~Report + Close + Audit (F08)~~ **구현 완료, 실 LLM 검증 대기** (2026-08-19).
+   `GET /sessions/{id}/report`, `POST /sessions/{id}/close`, `audit_event` 기록 9개 지점
+   → `session/CloseEligibilityEvaluator` — **리포트의 버튼 상태와 종료 요청 검증이 같은 판정을
+   쓴다.** 갈라지면 버튼은 활성화됐는데 눌러보면 400 이 나온다
+   → `report/ReportService` 는 **아무것도 계산하지 않는다.** Coverage·Understanding·종료 조건을
+   각 모듈에서 받아 담기만 한다. 여기서 다시 조립하면 리포트의 Gate 판정이 화면과 달라진다
+   → `audit/AuditRecorder` 는 **`Propagation.MANDATORY`** 다. 감사 기록은 자기가 기록하는
+   변경과 같은 트랜잭션이어야 한다 — 새 트랜잭션을 열면 상태 전이는 롤백됐는데 "종료했다"는
+   기록만 남는 조합이 생긴다. 그래서 요약 문자열은 서비스가 만들어 `AuditEntry` 로 Writer 에
+   넘긴다(규칙 6 때문에 서비스에는 트랜잭션이 없다)
+   → `AuditEventRepository` 는 **`JpaRepository` 를 상속하지 않는다.** append-only 테이블에
+   `delete` 가 자동완성에 뜨지 않게 필요한 두 메서드만 선언했다
+   → **감사 기록이 세션을 고정한다.** `audit_event` 가 `consultation_session` 을 참조하고
+   append-only 라 세션 행을 지울 수 없다. `RevisionConcurrencyIntegrationTest` 의 정리 로직이
+   이것 때문에 깨져서 revision 만 비우도록 고쳤다 — **의도된 동작이다**
+   → 감사 요약에 **상담 원문·고객 답변·미해결 사유 본문을 넣지 않는다.** 원본 테이블에 이미
+   있고, append-only 라 한 번 들어가면 지울 수 없다
+   → `actorRole` 이 리포트의 핵심 필드다. 세션 생성·revision 저장은 **SYSTEM** 이다 —
+   인증이 없어 조작자가 누구인지 모르는데 STAFF 로 적으면 없는 신원을 지어내는 것이다
 5. 오프라인 평가 모듈 + Rule baseline
 
 리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·

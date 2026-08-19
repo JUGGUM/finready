@@ -38,4 +38,16 @@ public class SessionController {
 	                                       @RequestBody CreateRevisionRequest request) {
 		return sessionService.createRevision(sessionId, request);
 	}
+
+	/**
+	 * F08 종료. <b>세션을 종료하는 유일한 경로다.</b>
+	 *
+	 * <p>이미 닫힌 세션에 재호출해도 200 + 같은 응답이다(멱등). 200 인 이유는 계약이
+	 * 201 을 정의하지 않기 때문이며, 새 자원을 만드는 요청도 아니다.
+	 */
+	@PostMapping("/{sessionId}/close")
+	public SessionResponse closeSession(@PathVariable String sessionId,
+	                                    @RequestBody CloseSessionRequest request) {
+		return sessionService.closeSession(sessionId, request);
+	}
 }

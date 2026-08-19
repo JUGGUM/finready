@@ -1,5 +1,7 @@
 package io.finready.explanation;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditEventType;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.GenerationSource;
@@ -88,7 +90,7 @@ public class ReExplanationService {
 
 		ReExplanation stored = reExplanationRepository
 				.findFirstBySessionIdAndRiskIdOrderByIdDesc(sessionId, riskId)
-				.orElseGet(() -> writer.save(generate(session, risk, customerAnswer)));
+				.orElseGet(() -> persist(generate(session, risk, customerAnswer)));
 
 		// 재설명이 저장된 뒤에 발급한다 — 생성이 실패한 Risk 에 후속 질문만 남으면
 		// 새로고침 시 재설명 없이 질문부터 보이게 된다
@@ -113,6 +115,18 @@ public class ReExplanationService {
 	}
 
 	// ------------------------------------------------------------------
+
+	/**
+	 * 멱등 재사용일 때는 부르지 않는다 — 새로고침이 감사 로그를 부풀리면 리포트에서
+	 * "재설명을 몇 번 만들었나"가 사람 행동이 아니라 새로고침 횟수를 뜻하게 된다.
+	 */
+	private ReExplanation persist(ReExplanation generated) {
+		return writer.save(generated, AuditEntry.ai(AuditEventType.RE_EXPLANATION_GENERATED,
+				"riskId=" + generated.getRiskId()
+						+ ", source=" + generated.getGenerationSource()
+						+ ", guardrailRetried=" + generated.isGuardrailRetried()
+						+ ", guardrailViolations=" + generated.getGuardrailViolations()));
+	}
 
 	/**
 	 * 생성 → Guardrail → 위반 시 1회 재생성 → 재실패면 검수된 {@code fallbackPlainExplanation}.

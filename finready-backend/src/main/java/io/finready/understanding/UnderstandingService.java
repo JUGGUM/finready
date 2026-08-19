@@ -1,5 +1,7 @@
 package io.finready.understanding;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditEventType;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.GenerationSource;
@@ -129,7 +131,14 @@ public class UnderstandingService {
 			issued.put(risk.getRiskId(), question);
 		}
 
-		writer.saveIssuedQuestions(sessionId, toSave, initialWorkflowStates(session, targets));
+		// 문구는 남기지 않는다 — session_question 에 이미 있고, 감사 로그가 볼 것은
+		// "무엇에 대해 물었나"와 "몇 개가 검수 문항으로 대체됐나"다
+		writer.saveIssuedQuestions(sessionId, toSave, initialWorkflowStates(session, targets),
+				AuditEntry.system(AuditEventType.QUESTIONS_ISSUED,
+						"riskIds=" + toSave.stream().map(SessionQuestion::getRiskId).toList()
+								+ ", fallbackCount=" + toSave.stream()
+								.filter(q -> q.getGenerationSource() == GenerationSource.FALLBACK)
+								.count()));
 
 		return toQuestionsResponse(sessionId, targets, issued);
 	}
@@ -201,7 +210,11 @@ public class UnderstandingService {
 				.afterStaffResolution(hasRemainingRisk(sessionId, riskId));
 
 		writer.saveStaffResolution(sessionId, resolution, workflowState,
-				nextAction == NextAction.GO_TO_REPORT);
+				nextAction == NextAction.GO_TO_REPORT,
+				AuditEntry.staff(AuditEventType.STAFF_RESOLUTION_RECORDED, actor,
+						"riskId=" + riskId
+								+ ", disposition=" + request.disposition()
+								+ ", finalDisposition=" + disposition));
 
 		return new StaffResolutionResponse(
 				riskId,
@@ -348,8 +361,16 @@ public class UnderstandingService {
 				? issueRecheckQuestion(sessionId, risk, question)
 				: null;
 
+		// 답변 본문은 넣지 않는다 — 고객이 한 말이고, append-only 라 지울 수 없다.
+		// 판정 결과와 근거 위치만 남긴다
 		writer.saveAnswer(sessionId, result, workflowState, recheckQuestion,
-				nextAction == NextAction.GO_TO_REPORT);
+				nextAction == NextAction.GO_TO_REPORT,
+				AuditEntry.ai(AuditEventType.ANSWER_JUDGED,
+						"riskId=" + riskId
+								+ ", attempt=" + attempt
+								+ ", aiStatus=" + verdict.status()
+								+ ", answerSource=" + request.answerSource()
+								+ ", nextAction=" + nextAction));
 
 		return new UnderstandingResponse(
 				riskId,

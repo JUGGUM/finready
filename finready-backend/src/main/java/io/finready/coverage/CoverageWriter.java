@@ -1,5 +1,7 @@
 package io.finready.coverage;
 
+import io.finready.audit.AuditEntry;
+import io.finready.audit.AuditRecorder;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
@@ -29,29 +31,41 @@ class CoverageWriter {
 	private final ConsultationSessionRepository sessionRepository;
 	private final CoverageResultRepository coverageResultRepository;
 	private final GateOverrideRepository gateOverrideRepository;
+	private final AuditRecorder auditRecorder;
 	private final StateMachine stateMachine;
 
 	CoverageWriter(ConsultationSessionRepository sessionRepository,
 	               CoverageResultRepository coverageResultRepository,
 	               GateOverrideRepository gateOverrideRepository,
+	               AuditRecorder auditRecorder,
 	               StateMachine stateMachine) {
 		this.sessionRepository = sessionRepository;
 		this.coverageResultRepository = coverageResultRepository;
 		this.gateOverrideRepository = gateOverrideRepository;
+		this.auditRecorder = auditRecorder;
 		this.stateMachine = stateMachine;
 	}
 
-	/** 분석 결과 저장 + 세션 상태 전이를 한 트랜잭션으로 묶는다 */
+	/**
+	 * 분석 결과 저장 + 세션 상태 전이 + 감사 기록을 <b>한 트랜잭션으로</b> 묶는다.
+	 *
+	 * <p>감사 기록이 같은 경계 안에 있어야 한다. 밖에서 부르면 결과 저장이 롤백된 뒤에도
+	 * "분석했다"는 기록만 남는 조합이 생긴다.
+	 */
 	@Transactional
-	SessionStatus saveAnalysis(String sessionId, List<CoverageResult> results, SessionStatus target) {
+	SessionStatus saveAnalysis(String sessionId, List<CoverageResult> results,
+	                           SessionStatus target, AuditEntry audit) {
 		coverageResultRepository.saveAll(results);
+		auditRecorder.record(sessionId, audit);
 		return moveTo(sessionId, target);
 	}
 
-	/** Override 저장 + (열렸다면) 세션 상태 전이 */
+	/** Override 저장 + (열렸다면) 세션 상태 전이 + 감사 기록 */
 	@Transactional
-	SessionStatus saveOverrides(String sessionId, List<GateOverride> overrides, SessionStatus target) {
+	SessionStatus saveOverrides(String sessionId, List<GateOverride> overrides,
+	                            SessionStatus target, AuditEntry audit) {
 		gateOverrideRepository.saveAll(overrides);
+		auditRecorder.record(sessionId, audit);
 		return moveTo(sessionId, target);
 	}
 

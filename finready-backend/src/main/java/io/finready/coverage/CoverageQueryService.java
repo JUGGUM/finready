@@ -69,6 +69,19 @@ public class CoverageQueryService {
 	}
 
 	/**
+	 * F08 리포트의 {@code overrides} 섹션. Gate 판정과 무관하게 <b>직원이 무엇을 넘겼는지</b>
+	 * 그대로 싣는다 — Override 로 열린 Gate 는 열렸다는 사실보다 사유가 중요하다.
+	 *
+	 * <p>{@code GateOverride} 엔티티를 패키지 밖으로 내보내지 않는다. 계약에 없는 컬럼이
+	 * 리포트로 새는 것을 막는 것은 F01 에서 {@code DemoProductResponse} 를 둔 것과 같은 이유다.
+	 */
+	public List<CoverageResponse.OverrideView> overrideRecordsOf(String sessionId) {
+		return overridesOf(sessionId).values().stream()
+				.map(CoverageResponse.OverrideView::from)
+				.toList();
+	}
+
+	/**
 	 * 저장된 결과 + 현재 Override 로 Gate 를 다시 판정해 응답을 만든다.
 	 *
 	 * <p>{@link CoverageAnalysisService} 의 멱등 경로와 Override 경로가 함께 쓴다.

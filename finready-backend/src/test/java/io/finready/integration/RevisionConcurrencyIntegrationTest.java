@@ -59,10 +59,15 @@ class RevisionConcurrencyIntegrationTest extends AbstractPostgresIntegrationTest
 	@Autowired
 	private CustomerProfileRepository customerProfileRepository;
 
+	/**
+	 * 세션 행은 지우지 않는다. F08 부터 {@code createRevision} 이 {@code audit_event} 를 남기는데,
+	 * 그 테이블은 append-only(V2 트리거)라 <b>참조하는 세션을 지울 방법이 없다</b> —
+	 * 감사 기록이 세션을 고정한다는 뜻이고, 그게 의도된 동작이다.
+	 * revision 만 비우면 이 테스트가 필요로 하는 초기 상태(revisionNo 가 1부터)는 그대로 만들어진다.
+	 */
 	@BeforeEach
 	void seedSession() {
 		jdbcTemplate.update("delete from consultation_revision where session_id = ?", SESSION_ID);
-		jdbcTemplate.update("delete from consultation_session where id = ?", SESSION_ID);
 
 		jdbcTemplate.update("""
 				insert into product (id, name, archetype, product_risk_version, document_id, document_url,
@@ -78,6 +83,7 @@ class RevisionConcurrencyIntegrationTest extends AbstractPostgresIntegrationTest
 		jdbcTemplate.update("""
 				insert into consultation_session (id, product_id, customer_id, status, product_risk_version)
 				values (?, 'CONC_PROD', 'CONC_CUST', 'DRAFT', 'v1')
+				on conflict (id) do update set status = 'DRAFT'
 				""", SESSION_ID);
 	}
 

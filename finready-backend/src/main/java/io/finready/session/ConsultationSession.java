@@ -85,4 +85,25 @@ public class ConsultationSession {
 		stateMachine.assertCanTransition(this.status, to);
 		this.status = to;
 	}
+
+	/**
+	 * F08 종료. 상태 전이와 종료 흔적({@code closedBy}·{@code closedAt}·{@code unresolvedReason})을
+	 * <b>한 메서드로 묶는다.</b>
+	 *
+	 * <p>{@code transitionTo} 를 부르고 서비스가 setter 로 나머지를 채우게 두면, 전이는 됐는데
+	 * 종료자가 비어 있는 행이 만들어지는 경로가 열린다. 그런 행은 나중에 "누가 닫았는지 모르는
+	 * 종료된 상담"으로 남고, 감사 관점에서 되짚을 방법이 없다.
+	 *
+	 * @param unresolvedReason 미해결 사유. 없으면 null — 필수 여부는
+	 *                         {@link CloseEligibilityEvaluator} 가 이미 판정했다
+	 */
+	public void close(SessionStatus to,
+	                  String actor,
+	                  String unresolvedReason,
+	                  StateMachine stateMachine) {
+		transitionTo(to, stateMachine);
+		this.closedBy = actor;
+		this.closedAt = OffsetDateTime.now();
+		this.unresolvedReason = unresolvedReason;
+	}
 }

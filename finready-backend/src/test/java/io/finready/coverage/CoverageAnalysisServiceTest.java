@@ -81,9 +81,9 @@ class CoverageAnalysisServiceTest {
 		when(coverageResultRepository.findByRevisionIdOrderByRiskIdAsc(REVISION_ID))
 				.thenReturn(List.of());
 		when(gateOverrideRepository.findBySessionIdOrderByRiskIdAsc(SESSION_ID)).thenReturn(List.of());
-		when(writer.saveAnalysis(anyString(), anyList(), any())).thenAnswer(
+		when(writer.saveAnalysis(anyString(), anyList(), any(), any())).thenAnswer(
 				invocation -> invocation.getArgument(2));
-		when(writer.saveOverrides(anyString(), anyList(), any())).thenAnswer(
+		when(writer.saveOverrides(anyString(), anyList(), any(), any())).thenAnswer(
 				invocation -> invocation.getArgument(2));
 	}
 
@@ -347,7 +347,7 @@ class CoverageAnalysisServiceTest {
 
 			errorCodeOf(() -> service.analyze(SESSION_ID, AnalyzeCoverageRequest.latest()));
 
-			verify(writer, never()).saveAnalysis(anyString(), anyList(), any());
+			verify(writer, never()).saveAnalysis(anyString(), anyList(), any(), any());
 		}
 	}
 

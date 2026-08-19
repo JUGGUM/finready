@@ -1,13 +1,20 @@
 package io.finready.session;
 
+import io.finready.audit.AuditEventType;
+import io.finready.audit.AuditRecorder;
 import io.finready.common.ApiException;
 import io.finready.common.ErrorCode;
 import io.finready.common.StateMachine;
 import io.finready.coverage.CoverageQueryService;
+import io.finready.coverage.CoverageResponse;
+import io.finready.coverage.GateStatus;
 import io.finready.product.CustomerProfileRepository;
 import io.finready.product.Product;
 import io.finready.product.ProductRepository;
+import io.finready.understanding.FinalDisposition;
+import io.finready.understanding.RiskUnderstandingState;
 import io.finready.understanding.UnderstandingQueryService;
+import io.finready.understanding.WorkflowStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -16,12 +23,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -43,6 +52,7 @@ class SessionServiceTest {
 	private CustomerProfileRepository customerProfileRepository;
 	private CoverageQueryService coverageQueryService;
 	private UnderstandingQueryService understandingQueryService;
+	private AuditRecorder auditRecorder;
 	private SessionService sessionService;
 
 	@BeforeEach
@@ -53,9 +63,14 @@ class SessionServiceTest {
 		customerProfileRepository = mock(CustomerProfileRepository.class);
 		coverageQueryService = mock(CoverageQueryService.class);
 		understandingQueryService = mock(UnderstandingQueryService.class);
+		auditRecorder = mock(AuditRecorder.class);
 		sessionService = new SessionService(sessionRepository, revisionRepository,
 				productRepository, customerProfileRepository,
-				coverageQueryService, understandingQueryService, new StateMachine());
+				coverageQueryService, understandingQueryService,
+				// 종료 조건 판정은 대역이 아니라 진짜를 쓴다 — 이 클래스가 검증하려는 규칙이
+				// 그 안에 있고, 대역으로 두면 "무엇을 물어봤나"만 확인하게 된다
+				new CloseEligibilityEvaluator(new StateMachine()),
+				auditRecorder, new StateMachine());
 	}
 
 	private Product product() {
@@ -372,6 +387,182 @@ class SessionServiceTest {
 					.isInstanceOf(ApiException.class)
 					.extracting(ex -> ((ApiException) ex).code())
 					.isEqualTo(ErrorCode.SESSION_NOT_FOUND);
+		}
+	}
+
+	// ------------------------------------------------------------------
+	// POST /api/sessions/{id}/close  (F08)
+	// ------------------------------------------------------------------
+
+	@Nested
+	@DisplayName("세션 종료")
+	class CloseSession {
+
+		private void awaitingReview() {
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(sessionInStatus(SessionStatus.AWAITING_STAFF_REVIEW)));
+		}
+
+		@Test
+		@DisplayName("미해결이 없으면 SESSION_CLOSED_BY_STAFF 로 닫고 종료자를 남긴다")
+		void closesByStaff() {
+			awaitingReview();
+
+			SessionResponse response = sessionService.closeSession(
+					SESSION_ID, new CloseSessionRequest("staff-001", null, null));
+
+			assertThat(response.sessionStatus()).isEqualTo(SessionStatus.SESSION_CLOSED_BY_STAFF);
+			assertThat(response.closedAt()).isNotNull();
+		}
+
+		@Test
+		@DisplayName("미해결이 있는데 사유가 없으면 UNRESOLVED_REASON_REQUIRED")
+		void unresolvedWithoutReasonFails() {
+			awaitingReview();
+			when(understandingQueryService.statesOf(any())).thenReturn(List.of(
+					new RiskUnderstandingState("R01", "제목", List.of(), null,
+							WorkflowStatus.MANUAL_REVIEW_REQUIRED, null, null)));
+
+			assertThatThrownBy(() -> sessionService.closeSession(
+					SESSION_ID, new CloseSessionRequest("staff-001", "  ", null)))
+					.isInstanceOf(ApiException.class)
+					.extracting(ex -> ((ApiException) ex).code())
+					.isEqualTo(ErrorCode.UNRESOLVED_REASON_REQUIRED);
+		}
+
+		@Test
+		@DisplayName("사유가 있으면 SESSION_CLOSED_WITH_UNRESOLVED 로 닫힌다")
+		void closesWithUnresolved() {
+			ConsultationSession session = sessionInStatus(SessionStatus.AWAITING_STAFF_REVIEW);
+			when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+			when(understandingQueryService.statesOf(any())).thenReturn(List.of(
+					new RiskUnderstandingState("R01", "제목", List.of(), null,
+							WorkflowStatus.COMPLETE, FinalDisposition.UNRESOLVED, null)));
+
+			SessionResponse response = sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", "고객이 재방문 예정", null));
+
+			assertThat(response.sessionStatus())
+					.isEqualTo(SessionStatus.SESSION_CLOSED_WITH_UNRESOLVED);
+			assertThat(session.getUnresolvedReason()).isEqualTo("고객이 재방문 예정");
+			assertThat(session.getClosedBy()).isEqualTo("staff-001");
+		}
+
+		/**
+		 * 정상 종료인데 사유가 남아 있으면 리포트에서 "무언가 미해결이었다"로 읽힌다.
+		 * 프론트가 입력값을 지우지 않고 보내는 경우가 있어 서버에서 잘라낸다.
+		 */
+		@Test
+		@DisplayName("미해결이 없으면 사유를 보내도 저장하지 않는다")
+		void dropsReasonWhenNothingUnresolved() {
+			ConsultationSession session = sessionInStatus(SessionStatus.AWAITING_STAFF_REVIEW);
+			when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+
+			sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", "화면에 남아 있던 값", null));
+
+			assertThat(session.getUnresolvedReason()).isNull();
+		}
+
+		@Test
+		@DisplayName("WARN_ONLY 확인이 빠지면 WARNING_ACKNOWLEDGEMENT_REQUIRED 이고 riskId 를 실어 준다")
+		void missingAcknowledgementFails() {
+			awaitingReview();
+			when(coverageQueryService.latestFor(any())).thenReturn(Optional.of(coverageWithWarnings()));
+
+			assertThatThrownBy(() -> sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", null, List.of("R05"))))
+					.isInstanceOf(ApiException.class)
+					.satisfies(ex -> {
+						assertThat(((ApiException) ex).code())
+								.isEqualTo(ErrorCode.WARNING_ACKNOWLEDGEMENT_REQUIRED);
+						assertThat(((ApiException) ex).riskId()).isEqualTo("R07");
+					});
+		}
+
+		/** 개수만 세면 다른 Risk 를 같은 개수만큼 보내도 통과한다 */
+		@Test
+		@DisplayName("확인 목록은 개수가 아니라 riskId 로 대조한다")
+		void acknowledgementIsMatchedByRiskId() {
+			awaitingReview();
+			when(coverageQueryService.latestFor(any())).thenReturn(Optional.of(coverageWithWarnings()));
+
+			assertThatThrownBy(() -> sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", null, List.of("R01", "R02"))))
+					.isInstanceOf(ApiException.class)
+					.extracting(ex -> ((ApiException) ex).code())
+					.isEqualTo(ErrorCode.WARNING_ACKNOWLEDGEMENT_REQUIRED);
+		}
+
+		@Test
+		@DisplayName("모두 확인했으면 종료된다")
+		void closesWhenAllWarningsAcknowledged() {
+			awaitingReview();
+			when(coverageQueryService.latestFor(any())).thenReturn(Optional.of(coverageWithWarnings()));
+
+			SessionResponse response = sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", null, List.of("R05", "R07")));
+
+			assertThat(response.sessionStatus()).isEqualTo(SessionStatus.SESSION_CLOSED_BY_STAFF);
+		}
+
+		@Test
+		@DisplayName("이해 확인 전에는 종료할 수 없다")
+		void cannotCloseBeforeReview() {
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(sessionInStatus(SessionStatus.UNDERSTANDING_IN_PROGRESS)));
+
+			assertThatThrownBy(() -> sessionService.closeSession(
+					SESSION_ID, new CloseSessionRequest("staff-001", null, null)))
+					.isInstanceOf(ApiException.class)
+					.extracting(ex -> ((ApiException) ex).code())
+					.isEqualTo(ErrorCode.INVALID_STATE_TRANSITION);
+		}
+
+		/** 종료 버튼을 두 번 누르거나 새로고침 후 다시 누르는 것이 409 로 끝나면 안 된다 */
+		@Test
+		@DisplayName("이미 닫힌 세션에 재호출해도 같은 응답이다 (멱등)")
+		void isIdempotent() {
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(sessionInStatus(SessionStatus.SESSION_CLOSED_BY_STAFF)));
+
+			SessionResponse response = sessionService.closeSession(
+					SESSION_ID, new CloseSessionRequest("staff-002", null, null));
+
+			assertThat(response.sessionStatus()).isEqualTo(SessionStatus.SESSION_CLOSED_BY_STAFF);
+			verify(auditRecorder, never()).recordStaff(anyString(), any(), anyString(), anyString());
+		}
+
+		@Test
+		@DisplayName("actor 가 없으면 INVALID_REQUEST")
+		void actorIsRequired() {
+			when(sessionRepository.findById(SESSION_ID))
+					.thenReturn(Optional.of(sessionInStatus(SessionStatus.AWAITING_STAFF_REVIEW)));
+
+			assertThatThrownBy(() -> sessionService.closeSession(
+					SESSION_ID, new CloseSessionRequest(" ", null, null)))
+					.isInstanceOf(ApiException.class)
+					.extracting(ex -> ((ApiException) ex).code())
+					.isEqualTo(ErrorCode.INVALID_REQUEST);
+		}
+
+		/** 감사 기록이 없으면 "누가 언제 닫았는지"를 되짚을 방법이 사라진다 */
+		@Test
+		@DisplayName("종료를 감사 이벤트로 남긴다")
+		void recordsAuditEvent() {
+			awaitingReview();
+
+			sessionService.closeSession(SESSION_ID,
+					new CloseSessionRequest("staff-001", null, null));
+
+			verify(auditRecorder).recordStaff(eq(SESSION_ID), eq(AuditEventType.SESSION_CLOSED),
+					eq("staff-001"), anyString());
+		}
+
+		private CoverageResponse coverageWithWarnings() {
+			return new CoverageResponse(SESSION_ID, 1L, SessionStatus.AWAITING_STAFF_REVIEW,
+					GateStatus.READY_FOR_UNDERSTANDING, true,
+					List.of(), List.of("R05", "R07"), List.of(), null);
 		}
 	}
 
