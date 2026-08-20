@@ -549,7 +549,28 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
    있고, append-only 라 한 번 들어가면 지울 수 없다
    → `actorRole` 이 리포트의 핵심 필드다. 세션 생성·revision 저장은 **SYSTEM** 이다 —
    인증이 없어 조작자가 누구인지 모르는데 STAFF 로 적으면 없는 신원을 지어내는 것이다
-5. 오프라인 평가 모듈 + Rule baseline
+5. ~~오프라인 평가 모듈 + Rule baseline~~ **완료 + 실측** (2026-08-19).
+   `RuleBasedClassifier`(`CoverageClassifier` 포트의 규칙 기반 구현, 서로 다른 키워드
+   0개=NOT_FOUND/1개=INSUFFICIENT/2개 이상=EXPLAINED, `CONTRADICTED`는 구조적으로 낼 수 없음) +
+   `CoverageBaselineComparisonTest`(`@Tag("evaluation")`, `./gradlew evaluate`) +
+   결정적인 `RuleBaselineTest`(기본 `test`에 포함, LLM·Docker 불필요)
+   → **실측: baseline이 Risk 49/54(90.7%)·Gate 6/6.** LLM을 측정된 3개 시나리오로 좁히면
+   25/27로 기록된 LLM 실측치와 **동점** — 집계 정확도만으로는 LLM 도입을 정당화할 수 없다
+   → 차이는 한 자리(`CONS_A_003` R01)뿐이다. 직원이 사실과 반대로 말했는데 baseline은
+   키워드가 있다는 이유로 EXPLAINED로 통과시킨다 — **없는 설명을 놓치는 것보다 틀린 설명을
+   인증하는 게 이 상품에서 더 나쁜 실패**라 이 한 자리가 LLM을 쓰는 근거다.
+   그 시나리오의 Gate가 맞은 것도 우연이다(막은 건 R02·R08이지 R01이 아니다)
+   → 그래서 리포트를 집계 점수 하나로 접지 않았다: `CONTRADICTED` 전용 절 분리(안 그러면
+   1/54에 묻힘), Gate는 막은 Risk 목록과 함께 찍음(우연을 우연으로 보이게), 단언은 점수가
+   아니라 성질에 건다(`CONTRADICTED` 불가·결정성·바닥값). **"LLM이 baseline보다 높다"고
+   단언하지 않는다** — 동점이 이 평가의 산출물이다
+   → **함정**: `evaluate` 태스크가 `LLM_API_KEY`를 워커에 넘기지 않아 IntelliJ Run
+   Configuration에만 넣으면 조용히 skip됐다(결과 XML도 `<skipped/>`뿐, 이유 기록 없음).
+   `build.gradle.kts`에서 `~/.gradle/gradle.properties`의 `llmApiKey` 또는 환경변수를
+   워커로 명시 전달하도록 고쳤고, 키가 아예 없으면 **skip이 아니라 FAILED + 조치 배너**로
+   바꿨다 — 사람이 명시적으로 타이핑해서 도는 태스크에 조용한 초록을 돌려주는 건 안전장치가
+   아니라 거짓말이라서. 프로젝트 `gradle.properties`는 `.gitignore` 대상(실행법을 문서화하는
+   순간 누가 거기 키를 커밋한다)
 
 리포지토리는 `product`·`product_risk`·`customer_profile`·`consultation_session`·
 `consultation_revision`·`coverage_result`·`gate_override`·`session_question`·
@@ -563,7 +584,12 @@ Guardrail 상세는 `docs/decisions/2026-08-19-guardrail-negation.md`.
 > `http://localhost:3000`이라 배포 도메인을 안 넣으면 배포 프론트에서 막힌다.
 
 > **TRD §18 Step 1 DoD 충족.** `연결 + Flyway + 시드 로더 + GET /products/demo` +
-> §3.4 검증 5항목이 모두 끝났다. 다음 순서 1번부터는 Step 2다.
+> §3.4 검증 5항목이 모두 끝났다.
+> **다음 순서 5항목(Step 2) 모두 완료** (2026-08-19) — F03~F08 전 파이프라인 + 오프라인 평가
+> 모듈까지 실 LLM 검증됨. TRD §18에서 Step 2 다음 단계(Step 3 이하)를 확인하고 이어갈 것 —
+> 코드로는 알 수 없고 PDF 원본을 봐야 한다. 그 전까지는 "알려진 문제"·"미결정"·
+> "데이터셋 현황"에 쌓인 잔여 항목(Coverage 레이턴시 초과, 시나리오 6/60·답변 13/180,
+> `CONS_A_006` 미실행, 캐시 TTL 미결정)이 우선순위 후보다
 
 ### 데이터셋 현황 (별도 작업, 코드와 병행)
 - 상담 시나리오 6 / 목표 60 — **6건 모두 본문 작성 완료** (2026-08-18).
