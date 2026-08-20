@@ -58,6 +58,27 @@ public class LlmCallLog {
 	@Column(name = "attempt", nullable = false)
 	private short attempt;
 
+	/**
+	 * 토큰 사용량. <b>null 과 0 은 다른 뜻이다</b> — 응답을 받기 전에 실패한 호출에는
+	 * 값이 없고, 거기에 0 을 넣으면 "토큰을 0개 썼다"로 읽혀 평균이 오염된다.
+	 */
+	@Column(name = "input_tokens")
+	private Integer inputTokens;
+
+	@Column(name = "output_tokens")
+	private Integer outputTokens;
+
+	/** 계속 0 이면 prompt caching 이 조용히 안 걸리는 것이다. 유일한 신호다 */
+	@Column(name = "cache_read_tokens")
+	private Integer cacheReadTokens;
+
+	@Column(name = "cache_write_tokens")
+	private Integer cacheWriteTokens;
+
+	/** {@code prompt_version} 으로 복원되지 않는 레이턴시 변수라 따로 남긴다 */
+	@Column(name = "effort", length = 8)
+	private String effort;
+
 	@Column(name = "created_at", nullable = false)
 	private OffsetDateTime createdAt;
 
@@ -69,7 +90,9 @@ public class LlmCallLog {
 	                  String rawResponse,
 	                  boolean parsedOk,
 	                  Integer latencyMs,
-	                  short attempt) {
+	                  short attempt,
+	                  TokenUsage usage,
+	                  String effort) {
 		this.sessionId = sessionId;
 		this.stage = stage;
 		this.promptVersion = promptVersion;
@@ -79,6 +102,22 @@ public class LlmCallLog {
 		this.parsedOk = parsedOk;
 		this.latencyMs = latencyMs;
 		this.attempt = attempt;
+		this.effort = effort;
+		if (usage != null) {
+			this.inputTokens = usage.input();
+			this.outputTokens = usage.output();
+			this.cacheReadTokens = usage.cacheRead();
+			this.cacheWriteTokens = usage.cacheWrite();
+		}
 		this.createdAt = OffsetDateTime.now();
+	}
+
+	/**
+	 * 토큰 4개를 위치 인자로 풀지 않는다. 생성자가 13개 인자가 되면 같은 타입
+	 * ({@code Integer}) 넷이 나란히 서서 <b>순서를 바꿔 넘겨도 컴파일이 통과</b>한다.
+	 *
+	 * <p>응답을 못 받은 호출에는 통째로 {@code null} 을 넘긴다.
+	 */
+	public record TokenUsage(Integer input, Integer output, Integer cacheRead, Integer cacheWrite) {
 	}
 }

@@ -70,9 +70,12 @@ public class AiGateway {
 		for (short attempt = 1; attempt <= properties.maxRetries() + 1; attempt++) {
 			long startNanos = System.nanoTime();
 			String rawResponse = null;
+			LlmCallLog.TokenUsage usage = null;
 			boolean parsedOk = false;
 			try {
-				rawResponse = send(request);
+				Sent sent = send(request);
+				rawResponse = sent.text();
+				usage = sent.usage();
 				T parsed = parser.parse(rawResponse);
 				parsedOk = true;
 				return parsed;
@@ -90,14 +93,16 @@ public class AiGateway {
 						truncate(rawResponse),
 						parsedOk,
 						elapsedMs(startNanos),
-						attempt));
+						attempt,
+						usage,
+						request.effort().toString()));
 			}
 		}
 
 		throw toApiException(lastFailure, request);
 	}
 
-	private String send(AiCall request) {
+	private Sent send(AiCall request) {
 		MessageCreateParams.Builder params = MessageCreateParams.builder()
 				.model(properties.model())
 				.maxTokens(request.maxTokens())
@@ -130,7 +135,38 @@ public class AiGateway {
 			throw new IllegalStateException("응답에 텍스트 블록이 없다 (stopReason=%s)"
 					.formatted(message.stopReason()));
 		}
-		return text;
+		return new Sent(text, tokenUsage(message));
+	}
+
+	/**
+	 * 응답 본문과 토큰 사용량을 함께 들고 나온다.
+	 *
+	 * <p>{@code send} 가 {@code String} 만 돌려주던 동안 usage 는 {@link #logUsage} 안에서
+	 * INFO 한 줄로 소비되고 사라졌다. 그래서 "레이턴시는 출력 토큰에 비례한다"는 튜닝
+	 * 문서의 핵심 주장이 <b>DB 로는 검증되지 않는 상태</b>였다 (TRD §7.2 가 이 테이블을
+	 * 성능 실측의 원천으로 규정하는데도).
+	 */
+	private record Sent(String text, LlmCallLog.TokenUsage usage) {
+	}
+
+	/** 응답을 받았지만 usage 를 못 읽는 경우까지 호출 전체를 죽이지 않는다 */
+	private LlmCallLog.TokenUsage tokenUsage(Message message) {
+		try {
+			Usage usage = message.usage();
+			return new LlmCallLog.TokenUsage(
+					toInt(usage.inputTokens()),
+					toInt(usage.outputTokens()),
+					toInt(usage.cacheReadInputTokens().orElse(0L)),
+					toInt(usage.cacheCreationInputTokens().orElse(0L)));
+		}
+		catch (RuntimeException ex) {
+			log.debug("usage 판독 실패 (stage={})", message.id(), ex);
+			return null;
+		}
+	}
+
+	private Integer toInt(Long value) {
+		return value == null ? null : Math.toIntExact(value);
 	}
 
 	/**

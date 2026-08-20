@@ -38,7 +38,9 @@ finready:
     api-key: test-key-not-used
     model: test-model
     base-url: http://localhost:0
-    timeout-seconds: 30
+    # 운영과 같은 값으로 둔다. 이 프로파일은 실제로 호출하지 않지만(base-url localhost:0),
+    # 두 값이 다르면 나중에 어느 쪽이 맞는지 확인하는 데 시간이 든다
+    timeout-seconds: 60
     max-retries: 1
     temperature: 0
 
